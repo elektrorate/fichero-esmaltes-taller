@@ -1,0 +1,151 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - displayName: string
+    //   - photoURL: string (uri format)
+    //   - role: string (enum: admin, editor, collaborator, reviewer)
+    //   - createdAt: timestamp
+    //
+    // Collection: glazes
+    // Document ID: {glazeId}
+    // Fields:
+    //   - name: string (required)
+    //   - code: string
+    //   - status: string (enum: draft, pending, validated, published, archived)
+    //   - authorId: string (required)
+    //   - authorName: string
+    //   - recipe: map (base: list, additional: list, totalBase: number)
+    //   - createdAt: timestamp
+    //   - updatedAt: timestamp
+    //
+    // Collection: glazes/{glazeId}/comments
+    // Document ID: {commentId}
+    // Fields:
+    //   - glazeId: string
+    //   - authorId: string
+    //   - text: string
+    //   - createdAt: timestamp
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (request.auth.token.email == "erick@kgbycia.com" && request.auth.token.email_verified == true) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isEditor() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'editor' || isAdmin()
+      );
+    }
+
+    function isReviewer() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'reviewer' || isAdmin()
+      );
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'editor', 'collaborator', 'reviewer'];
+    }
+
+    function isValidGlaze(data) {
+      return data.keys().hasAll(['name', 'status', 'authorId', 'recipe']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.status in ['draft', 'pending', 'validated', 'published', 'archived'] &&
+             data.authorId is string &&
+             data.recipe is map;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // PII Protection: Only owner or admin can read full profile
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Role protection: Users can create their own profile with 'collaborator' role by default
+      // unless they are the bootstrap admin.
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == 'collaborator') || 
+        (request.auth.token.email == "erick@kgbycia.com" && request.resource.data.role == 'admin')
+      );
+      
+      // Role protection: Only admin can change roles
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin()
+      );
+    }
+
+    match /glazes/{glazeId} {
+      // Published glazes are readable by any authenticated user
+      // Drafts/Pending are readable by author, editor, reviewer, admin
+      allow read: if isAuthenticated() && (
+        resource.data.status == 'published' || 
+        resource.data.authorId == request.auth.uid || 
+        isEditor() || 
+        isReviewer()
+      );
+
+      allow create: if isAuthenticated() && isValidGlaze(request.resource.data) && (
+        (request.resource.data.authorId == request.auth.uid && request.resource.data.status in ['draft', 'pending']) ||
+        isEditor()
+      );
+
+      allow update: if isAuthenticated() && isValidGlaze(request.resource.data) && (
+        // Author can update their own if not published (or if editor)
+        (resource.data.authorId == request.auth.uid && (resource.data.status != 'published' || isEditor())) ||
+        isEditor() ||
+        isReviewer() // Reviewers can update status to 'validated'
+      );
+
+      allow delete: if isAdmin() || (isEditor() && resource.data.status == 'draft');
+
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
+        allow delete: if isAdmin() || resource.data.authorId == request.auth.uid;
+      }
+    }
+
+    match /invites/{email} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}

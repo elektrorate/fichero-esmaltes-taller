@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Application user with role-based access control",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string", "format": "uri" },
+        "role": { "type": "string", "enum": ["admin", "editor", "collaborator", "reviewer"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Glaze": {
+      "title": "Glaze",
+      "description": "Ceramic glaze technical sheet",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "mainImage": { "type": "string", "format": "uri" },
+        "gallery": { "type": "array", "items": { "type": "string", "format": "uri" } },
+        "finish": { "type": "string" },
+        "color": { "type": "string" },
+        "texture": { "type": "string" },
+        "usage": { "type": "array", "items": { "type": "string" } },
+        "applicationMethod": { "type": "array", "items": { "type": "string" } },
+        "chemicalFamily": { "type": "string" },
+        "observations": { "type": "string" },
+        "recipe": {
+          "type": "object",
+          "properties": {
+            "base": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "material": { "type": "string" },
+                  "amount": { "type": "number" }
+                }
+              }
+            },
+            "additional": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "material": { "type": "string" },
+                  "amount": { "type": "number" }
+                }
+              }
+            },
+            "totalBase": { "type": "number" }
+          }
+        },
+        "temperature": { "type": "string" },
+        "clayBody": { "type": "string" },
+        "firingType": { "type": "string" },
+        "atmosphere": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "pending", "validated", "published", "archived"] },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "isValidated": { "type": "boolean" }
+      },
+      "required": ["name", "status", "authorId", "recipe"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Internal feedback on a glaze sheet",
+      "type": "object",
+      "properties": {
+        "glazeId": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["glazeId", "authorId", "text"]
+    },
+    "Invite": {
+      "title": "Invite",
+      "description": "Pre-authorized role for an email",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "editor", "collaborator", "reviewer"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and roles"
+    },
+    "/glazes/{glazeId}": {
+      "schema": "Glaze",
+      "description": "Glaze technical sheets"
+    },
+    "/glazes/{glazeId}/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "Internal comments for a glaze"
+    },
+    "/invites/{email}": {
+      "schema": "Invite",
+      "description": "Pre-authorized roles by email"
+    }
+  }
+}

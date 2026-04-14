@@ -1,0 +1,6 @@
+{
+  "name": "Repositorio de Esmaltes",
+  "description": "Repositorio profesional de esmaltes cerámicos con gestión de fichas técnicas, cálculo inteligente de recetas y sistema de filtrado avanzado.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": []
+}
