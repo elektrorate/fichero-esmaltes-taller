@@ -14,7 +14,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     total: 0,
     pending: 0,
     validated: 0,
-    recent: [] as Glaze[]
+    recent: [] as Glaze[],
+    lowInventory: [] as Glaze[]
   });
 
   useEffect(() => {
@@ -27,7 +28,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         total: glazes.length,
         pending: glazes.filter(g => g.status === 'pending').length,
         validated: glazes.filter(g => g.status === 'validated' || g.status === 'published').length,
-        recent: glazes.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).slice(0, 5)
+        recent: glazes.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).slice(0, 5),
+        lowInventory: glazes.filter(g => g.inventoryLevel !== undefined && g.inventoryLevel <= 25)
       });
     });
 
@@ -43,6 +45,32 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
 
   return (
     <div className="space-y-8">
+      {stats.lowInventory.length > 0 && (
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-[24px] bg-red-50 border border-red-100 p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm"
+        >
+          <div className="flex items-start md:items-center gap-4">
+            <div className="rounded-full bg-red-100 p-3 text-red-600 shrink-0">
+              <AlertCircle size={24} />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-red-900 tracking-tight">Alerta de Inventario Crítico</h3>
+              <p className="text-sm text-red-700 mt-1">
+                Existen {stats.lowInventory.length} {stats.lowInventory.length === 1 ? 'materia prima' : 'materias primas'} con existencias al 25% o menos. Requieren reabastecimiento pronto.
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={() => onNavigate('settings')}
+            className="shrink-0 rounded-xl bg-red-600 px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 transition"
+          >
+            Revisar Inventario
+          </button>
+        </motion.div>
+      )}
+
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card, i) => (
           <motion.div

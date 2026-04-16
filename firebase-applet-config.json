@@ -1,10 +1,9 @@
 {
-  "projectId": "gen-lang-client-0939618258",
-  "appId": "1:313215377072:web:4845d0dd347961101f2575",
-  "apiKey": "AIzaSyC4hIykXhXDlM2UOQiBRcDe-SIX8vK1wzo",
-  "authDomain": "gen-lang-client-0939618258.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-25bc0e5c-47f0-4621-a250-2118e998e2b2",
-  "storageBucket": "gen-lang-client-0939618258.firebasestorage.app",
-  "messagingSenderId": "313215377072",
-  "measurementId": ""
+  "apiKey": "AIzaSyD_FdCCAxhWpM0CW78G8Nw_GzDrjWmMJik",
+  "authDomain": "fichero-esmaltes.firebaseapp.com",
+  "projectId": "fichero-esmaltes",
+  "storageBucket": "fichero-esmaltes.firebasestorage.app",
+  "messagingSenderId": "563165123880",
+  "appId": "1:563165123880:web:d321d009459f97ee01ec1d",
+  "measurementId": "G-EQELBP32N6"
 }

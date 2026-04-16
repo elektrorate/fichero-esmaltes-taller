@@ -9,11 +9,13 @@ import { Edit2, Eye, MoreVertical, Tag, FileDown, CheckSquare, Square, Download,
 import { cn } from '../lib/utils';
 
 interface GlazeListProps {
+  searchQuery?: string;
+  activeFilters?: any;
   onSelect: (id: string) => void;
   onEdit: (id: string) => void;
 }
 
-export default function GlazeList({ onSelect, onEdit }: GlazeListProps) {
+export default function GlazeList({ searchQuery = '', activeFilters = {}, onSelect, onEdit }: GlazeListProps) {
   const [glazes, setGlazes] = useState<Glaze[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -35,8 +37,25 @@ export default function GlazeList({ onSelect, onEdit }: GlazeListProps) {
     );
   };
 
+  const filteredGlazes = glazes.filter(glaze => {
+    if (searchQuery) {
+      const lowerQuery = searchQuery.toLowerCase();
+      const matchesName = glaze.name.toLowerCase().includes(lowerQuery);
+      const matchesCode = glaze.code?.toLowerCase().includes(lowerQuery);
+      if (!matchesName && !matchesCode) return false;
+    }
+
+    if (activeFilters.color && glaze.color !== activeFilters.color) return false;
+    if (activeFilters.finish && glaze.finish !== activeFilters.finish) return false;
+    if (activeFilters.texture && glaze.texture !== activeFilters.texture) return false;
+    if (activeFilters.chemicalFamily && glaze.chemicalFamily !== activeFilters.chemicalFamily) return false;
+    if (activeFilters.status && glaze.status !== activeFilters.status) return false;
+
+    return true;
+  });
+
   const handleBulkExport = async () => {
-    const selectedGlazes = glazes.filter(g => selectedIds.includes(g.id!));
+    const selectedGlazes = filteredGlazes.filter(g => selectedIds.includes(g.id!));
     if (selectedGlazes.length === 0) return;
     setIsExporting(true);
     try {
@@ -101,7 +120,7 @@ export default function GlazeList({ onSelect, onEdit }: GlazeListProps) {
         {isSelectionMode && (
           <div className="flex gap-3">
             <button 
-              onClick={() => setSelectedIds(glazes.map(g => g.id!))}
+              onClick={() => setSelectedIds(filteredGlazes.map(g => g.id!))}
               className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3] hover:text-[#2D3436]"
             >
               Seleccionar Todos
@@ -117,7 +136,11 @@ export default function GlazeList({ onSelect, onEdit }: GlazeListProps) {
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-        {glazes.map((glaze, i) => (
+        {filteredGlazes.length === 0 ? (
+          <div className="col-span-full py-20 text-center text-[#636E72]">
+            <p>No se encontraron esmaltes que coincidan con la búsqueda y filtros.</p>
+          </div>
+        ) : filteredGlazes.map((glaze, i) => (
           <motion.div
             key={glaze.id}
             initial={{ opacity: 0, scale: 0.95 }}

@@ -345,7 +345,17 @@ export default function AdminPanel() {
                         </span>
                       </td>
                       <td className="py-4 text-right pr-4">
-                        <span className="text-[10px] font-medium text-[#B2BEC3]">Esperando primer ingreso...</span>
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="text-[10px] font-medium text-[#B2BEC3]">Esperando primer ingreso...</span>
+                          <a 
+                            href={`mailto:${invite.email}?subject=Acceso al Fichero de Esmaltes&body=Hola!%0A%0ASe te ha dado acceso al sistema de Fichas Técnicas del taller.%0A%0A1. Ingresa a la página web.%0A2. Inicia sesión seleccionando tu cuenta de Google (${invite.email}).%0A3. ¡Listo! El sistema reconocerá tu permiso automáticamente.%0A%0ASaludos!`}
+                            className="flex items-center gap-1 rounded-lg bg-[#2D3436] px-2 py-1 text-[10px] font-bold text-white hover:bg-black transition-all"
+                            title="Avisar por email"
+                          >
+                            <Mail size={12} />
+                            Avisar
+                          </a>
+                        </div>
                       </td>
                     </tr>
                   ))}

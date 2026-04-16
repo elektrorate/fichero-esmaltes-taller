@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { db, auth, storage, OperationType, handleFirestoreError } from '../lib/firebase';
+import { db, auth, OperationType, handleFirestoreError } from '../lib/firebase';
 import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Glaze, Recipe, RecipeItem, GlazeStatus } from '../types';
+import { Glaze, RecipeItem, GlazeStatus } from '../types';
 import { STATUS_LABELS } from '../constants';
-import { motion, AnimatePresence } from 'motion/react';
-import { Save, X, Plus, Trash2, Calculator, Info, Image as ImageIcon, AlertCircle, Camera, RefreshCw, Check, Loader2 as Spinner } from 'lucide-react';
+import { motion } from 'motion/react';
+import { Save, Plus, Trash2, Calculator, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface GlazeFormProps {
@@ -50,23 +49,91 @@ const CATEGORIES = {
   family: ['Borosilicato', 'Feldespático', 'Litio', 'Zinc', 'Magnesio', 'Cenizas', 'Alta alúmina', 'Baja expansión']
 };
 
+const RAW_MATERIALS = [
+  "Sílice", "Caolín EPK", "Caolín Grolleg", "Caolín calcinado", "Arcilla de bola", 
+  "Arcilla inglesa", "Bentonita", "Feldespato potásico", "Feldespato sódico", 
+  "Nefelina sienita", "Carbonato cálcico", "Dolomita", "Talco", "Wollastonita", 
+  "Carbonato de magnesio", "Carbonato de bario", "Carbonato de estroncio", 
+  "Carbonato de litio", "Espodumena", "Petalita", "Borato de calcio", "Colemanita", 
+  "Ulexita", "Frita 3110", "Frita 3134", "Frita CQ003", "Frita 3195", "Frita 3124", 
+  "Frita 3249", "Frita 3269", "Óxido de zinc", "Alúmina hidratada", "Óxido de estaño", 
+  "Zircon", "Óxido de zirconio", "Dióxido de titanio", "Rutilo", "Ceniza de hueso", 
+  "Fosfato tricálcico", "Óxido de hierro", "Óxido rojo", "Óxido negro", "Óxido de cobre", 
+  "Carbonato de cobre", "Óxido de cobalto", "Carbonato de cobalto", "Óxido de manganeso", 
+  "Dióxido de manganeso", "Óxido de níquel", "Óxido de cromo", "Óxido de vanadio", 
+  "Ilmenita", "Carbonato de manganeso", "Carbonato de níquel", "Carbonato de hierro", 
+  "Nitrato de cobalto", "Nitrato de cobre", "Silicato de sodio", "Epsom (sulfato de magnesio)", 
+  "Chamota fina", "Arena silícea fina", "Chamota molida", "Chamota refractaria fina", 
+  "Ceniza vegetal tamizada", "Ceniza de madera", "Fluorita", "Bórax", "Ácido bórico", 
+  "Sulfato de bario", "Óxido de molibdeno", "Óxido de titanio anatasa", "Carburo de silicio"
+];
+
+// Helper to remove accents for search
+function normalizeString(str: string) {
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function AutocompleteInput({ value, onChange, placeholder, wrapperClassName, inputClassName }: { value: string, onChange: (val: string) => void, placeholder: string, wrapperClassName?: string, inputClassName?: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filteredMaterials = value ? RAW_MATERIALS.filter(m => 
+    normalizeString(m).toLowerCase().startsWith(normalizeString(value).toLowerCase())
+  ) : [];
+
+  return (
+    <div className={`relative ${wrapperClassName || ''}`} ref={wrapperRef}>
+      <input
+        value={value}
+        onChange={e => {
+          onChange(e.target.value);
+          setIsOpen(true);
+        }}
+        onFocus={() => setIsOpen(true)}
+        className={inputClassName}
+        placeholder={placeholder}
+      />
+      {isOpen && value && filteredMaterials.length > 0 && (
+        <ul className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-[#E4E4E2] bg-white p-1 shadow-lg">
+          {filteredMaterials.map(m => (
+            <li
+              key={m}
+              onClick={() => {
+                onChange(m);
+                setIsOpen(false);
+              }}
+              className="cursor-pointer rounded-lg px-3 py-2 text-left text-sm text-[#2D3436] hover:bg-[#F7F7F5]"
+            >
+              <span className="font-bold">{m.substring(0, value.length)}</span>
+              <span>{m.substring(value.length)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormProps) {
   const [loading, setLoading] = useState(false);
-  const [calcMode, setCalcMode] = useState<'percent' | 'grams'>('percent');
+  const [calcMode, setCalcMode] = useState<'percent' | 'grams'>('grams');
   const [targetWeight, setTargetWeight] = useState(100);
-  
-  // Camera State
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const [formData, setFormData] = useState<Partial<Glaze>>({
     name: '',
     code: '',
     mainImage: '',
+    gallery: [],
     finish: 'Brillante',
     color: 'Blanco',
     texture: 'Liso',
@@ -86,7 +153,6 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
   const [nextNumber, setNextNumber] = useState('001');
 
   useEffect(() => {
-    // Fetch next number for new glazes
     if (!glazeId) {
       const q = query(collection(db, 'glazes'), orderBy('createdAt', 'desc'), limit(1));
       const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -105,7 +171,6 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
   }, [glazeId]);
 
   useEffect(() => {
-    // Auto-generate code
     const colorCode = CATEGORIES.color.find(c => c.label === formData.color)?.code || '';
     const finishCode = CATEGORIES.finish.find(f => f.label === formData.finish)?.code || '';
     const usageCode = formData.usage && formData.usage.length > 0 
@@ -132,7 +197,6 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
             const data = docSnap.data() as Glaze;
             setFormData(data);
             
-            // Extract variant and sequence number from existing code
             const codeParts = data.code.split('-');
             if (codeParts.length >= 4) {
               setNextNumber(codeParts[3]);
@@ -175,7 +239,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
     return { baseTotal, additionalTotal };
   };
 
-  const { baseTotal, additionalTotal } = calculateTotals();
+  const { baseTotal } = calculateTotals();
 
   const handleRescale = () => {
     if (baseTotal === 0) return;
@@ -187,69 +251,62 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
     setFormData({ ...formData, recipe: newRecipe });
   };
 
-  // Camera Functions
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' }, 
-        audio: false 
-      });
-      setCameraStream(stream);
-      setIsCameraOpen(true);
-      setCapturedImage(null);
-      // Wait for modal to open and video element to be available
-      setTimeout(() => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, targetIdx?: number) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor selecciona un archivo de imagen válido.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 800;
+        const MAX_HEIGHT = 800;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
         }
-      }, 100);
-    } catch (err) {
-      console.error("Error accessing camera:", err);
-      alert("No se pudo acceder a la cámara. Por favor, verifica los permisos.");
-    }
-  };
 
-  const stopCamera = () => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
-    }
-    setIsCameraOpen(false);
-  };
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
 
-  const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        setCapturedImage(dataUrl);
-      }
-    }
-  };
+        // Compress to 0.6 quality JPEG to keep size really small (~50-100KB)
+        const base64String = canvas.toDataURL('image/jpeg', 0.6);
 
-  const uploadCapturedImage = async () => {
-    if (!capturedImage) return;
-    setIsUploading(true);
-    try {
-      const response = await fetch(capturedImage);
-      const blob = await response.blob();
-      const filename = `glazes/${auth.currentUser?.uid || 'anon'}_${Date.now()}.jpg`;
-      const storageRef = ref(storage, filename);
-      await uploadBytes(storageRef, blob);
-      const downloadURL = await getDownloadURL(storageRef);
-      setFormData({ ...formData, mainImage: downloadURL });
-      stopCamera();
-    } catch (err) {
-      console.error("Error uploading image:", err);
-      alert("Error al subir la imagen.");
-    } finally {
-      setIsUploading(false);
-    }
+        if (targetIdx === undefined) {
+          // Main image
+          setFormData({ ...formData, mainImage: base64String });
+        } else {
+          // Gallery update or add
+          const newGallery = [...(formData.gallery || [])];
+          if (targetIdx === -1) {
+            newGallery.push(base64String);
+          } else {
+            newGallery[targetIdx] = base64String;
+          }
+          setFormData({ ...formData, gallery: newGallery });
+        }
+      };
+    };
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -278,27 +335,26 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
   };
 
   return (
-    <>
-      <form onSubmit={handleSubmit} className="space-y-8">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-2xl font-semibold tracking-tight">{glazeId ? 'Editar Esmalte' : 'Nueva Ficha Técnica'}</h3>
-            <p className="text-sm text-[#636E72]">Completa los datos técnicos del laboratorio.</p>
-          </div>
-          <div className="flex gap-3">
-            <button type="button" onClick={onCancel} className="rounded-xl border border-[#E4E4E2] px-6 py-2.5 text-sm font-medium hover:bg-white">
-              Cancelar
-            </button>
-            <button 
-              type="submit" 
-              disabled={loading}
-              className="flex items-center gap-2 rounded-xl bg-[#2D3436] px-6 py-2.5 text-sm font-medium text-white hover:bg-black disabled:opacity-50"
-            >
-              {loading ? <Spinner className="h-4 w-4 animate-spin" /> : <Save size={18} />}
-              Guardar Ficha
-            </button>
-          </div>
+    <form onSubmit={handleSubmit} className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-2xl font-semibold tracking-tight">{glazeId ? 'Editar Esmalte' : 'Nueva Ficha Técnica'}</h3>
+          <p className="text-sm text-[#636E72]">Completa los datos técnicos del laboratorio.</p>
         </div>
+        <div className="flex gap-3">
+          <button type="button" onClick={onCancel} className="rounded-xl border border-[#E4E4E2] px-6 py-2.5 text-sm font-medium hover:bg-white">
+            Cancelar
+          </button>
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="flex items-center gap-2 rounded-xl bg-[#2D3436] px-6 py-2.5 text-sm font-medium text-white hover:bg-black disabled:opacity-50"
+          >
+            {loading ? <Spinner className="h-4 w-4 animate-spin" /> : <Save size={18} />}
+            Guardar Ficha
+          </button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
         {/* Left Column: Info */}
@@ -436,7 +492,6 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               </div>
             </div>
 
-            {/* Base Table */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h5 className="text-xs font-bold uppercase tracking-widest text-[#2D3436]">Base Principal</h5>
@@ -445,10 +500,11 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               <div className="space-y-2">
                 {formData.recipe?.base.map((item, idx) => (
                   <div key={idx} className="flex gap-3">
-                    <input 
+                    <AutocompleteInput 
                       value={item.material}
-                      onChange={e => handleRecipeChange('base', idx, 'material', e.target.value)}
-                      className="flex-1 rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
+                      onChange={val => handleRecipeChange('base', idx, 'material', val)}
+                      wrapperClassName="flex-1"
+                      inputClassName="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
                       placeholder="Materia prima"
                     />
                     <input 
@@ -476,7 +532,6 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               </div>
             </div>
 
-            {/* Additional Table */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h5 className="text-xs font-bold uppercase tracking-widest text-[#2D3436]">Adicionales (Colorantes, Opacificantes...)</h5>
@@ -485,10 +540,11 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               <div className="space-y-2">
                 {formData.recipe?.additional.map((item, idx) => (
                   <div key={idx} className="flex gap-3">
-                    <input 
+                    <AutocompleteInput 
                       value={item.material}
-                      onChange={e => handleRecipeChange('additional', idx, 'material', e.target.value)}
-                      className="flex-1 rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
+                      onChange={val => handleRecipeChange('additional', idx, 'material', val)}
+                      wrapperClassName="flex-1"
+                      inputClassName="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
                       placeholder="Materia prima"
                     />
                     <input 
@@ -505,7 +561,6 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               </div>
             </div>
 
-            {/* Rescale Tool */}
             <div className="rounded-2xl border border-[#E4E4E2] p-6 space-y-4">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <Calculator size={18} />
@@ -552,14 +607,16 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Imagen Principal</h4>
-              <button 
-                type="button"
-                onClick={startCamera}
-                className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#2D3436] hover:opacity-70"
-              >
-                <Camera size={14} />
-                Usar Cámara
-              </button>
+              <label className="flex cursor-pointer items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#2D3436] hover:opacity-70 transition-all">
+                <Upload size={14} />
+                Subir Archivo
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={(e) => handleImageUpload(e)}
+                />
+              </label>
             </div>
             <div className="group relative aspect-square overflow-hidden rounded-2xl bg-[#F7F7F5] border-2 border-dashed border-[#E4E4E2] flex flex-col items-center justify-center text-[#B2BEC3] hover:border-[#2D3436] hover:text-[#2D3436] transition-all">
               {formData.mainImage ? (
@@ -567,7 +624,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               ) : (
                 <>
                   <ImageIcon size={40} strokeWidth={1} />
-                  <p className="mt-2 text-[10px] font-bold uppercase tracking-widest">Subir Imagen</p>
+                  <p className="mt-2 text-[10px] font-bold uppercase tracking-widest text-center">Sin imagen<br/>Sube archivo o pega URL abajo</p>
                 </>
               )}
               <input 
@@ -575,9 +632,90 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 placeholder="URL de la imagen..."
                 value={formData.mainImage}
                 onChange={e => setFormData({ ...formData, mainImage: e.target.value })}
-                className="absolute bottom-4 left-4 right-4 rounded-lg border border-[#E4E4E2] bg-white/90 px-3 py-1.5 text-[10px] outline-none backdrop-blur-sm focus:border-[#2D3436]"
+                className="absolute bottom-4 left-4 right-4 rounded-lg border border-[#E4E4E2] bg-white/90 px-3 py-1.5 text-[10px] outline-none backdrop-blur-sm focus:border-[#2D3436] shadow-sm"
               />
             </div>
+          </div>
+
+          <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Galería de Fotos ({formData.gallery?.length || 0})</h4>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {(formData.gallery || []).map((img, idx) => (
+                <div key={idx} className="group relative aspect-square overflow-hidden rounded-2xl border border-[#E4E4E2] bg-[#F7F7F5] flex flex-col">
+                  {img ? (
+                    <img src={img} className="flex-1 h-full w-full object-cover" alt={`Gallery ${idx}`} referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-[#B2BEC3] pb-6 cursor-pointer hover:bg-white transition-all">
+                      <label className="flex h-full w-full flex-col items-center justify-center cursor-pointer">
+                        <Upload size={20} className="mb-1" />
+                        <span className="text-[10px] uppercase font-bold">Examinar</span>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={(e) => handleImageUpload(e, idx)}
+                        />
+                      </label>
+                    </div>
+                  )}
+                  <input 
+                    type="text" 
+                    placeholder="URL de imagen..."
+                    value={img}
+                    onChange={(e) => {
+                       const newGallery = [...(formData.gallery || [])];
+                       newGallery[idx] = e.target.value;
+                       setFormData({ ...formData, gallery: newGallery });
+                    }}
+                    className="absolute bottom-2 left-2 right-2 rounded-lg border border-[#E4E4E2] bg-white/90 px-2 py-1.5 text-[10px] outline-none backdrop-blur-sm focus:border-[#2D3436]"
+                  />
+                  <div className="absolute inset-0 hidden flex-col items-center justify-center gap-2 bg-black/50 backdrop-blur-sm group-hover:flex">
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        const newGallery = [...(formData.gallery || [])];
+                        newGallery.splice(idx, 1);
+                        const oldMain = formData.mainImage;
+                        if (oldMain) newGallery.push(oldMain);
+                        setFormData({ ...formData, mainImage: img, gallery: newGallery });
+                      }}
+                      className="rounded-lg bg-white/90 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-[#2D3436] hover:scale-105 active:scale-95 transition-all"
+                    >
+                      Principal
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        const newGallery = formData.gallery?.filter((_, i) => i !== idx);
+                        setFormData({ ...formData, gallery: newGallery });
+                      }}
+                      className="rounded-lg bg-red-500/90 p-2 text-white hover:bg-red-500 hover:scale-105 active:scale-95 transition-all"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {(formData.gallery?.length || 0) < 8 ? (
+                <button 
+                  type="button" 
+                  onClick={() => setFormData({ ...formData, gallery: [...(formData.gallery || []), ''] })} 
+                  className="flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#E4E4E2] text-[#B2BEC3] transition-all hover:border-[#2D3436] hover:text-[#2D3436] hover:bg-[#F4F4F2]"
+                >
+                  <Plus size={24} />
+                  <span className="text-[10px] font-bold uppercase tracking-widest mt-1">Añadir Hueco</span>
+                </button>
+              ) : (
+                <div className="flex aspect-square flex-col items-center justify-center rounded-2xl border border-[#E4E4E2] bg-[#F4F4F2] text-[#B2BEC3]">
+                  <span className="text-[10px] font-bold uppercase tracking-widest px-4 text-center">Límite de Galería Alcanzado</span>
+                </div>
+              )}
+            </div>
+            {(formData.gallery?.length || 0) >= 4 && (
+              <p className="text-[10px] text-amber-600 mt-2 font-medium">Nota: Guarda la ficha continuamente. Múltiples fotos consumen capacidad del documento gratis.</p>
+            )}
           </div>
 
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
@@ -612,79 +750,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
         </div>
       </div>
     </form>
-
-    {/* Camera Modal */}
-    <AnimatePresence>
-      {isCameraOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            className="relative w-full max-w-2xl overflow-hidden rounded-[32px] bg-white shadow-2xl"
-          >
-            <div className="flex items-center justify-between border-b border-[#F4F4F2] p-6">
-              <h3 className="text-lg font-semibold">Capturar Foto</h3>
-              <button onClick={stopCamera} className="rounded-full p-2 hover:bg-[#F7F7F5]">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="relative aspect-video bg-black overflow-hidden">
-              {!capturedImage ? (
-                <video 
-                  ref={videoRef} 
-                  autoPlay 
-                  playsInline 
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <img src={capturedImage} className="h-full w-full object-cover" alt="Captured" />
-              )}
-              <canvas ref={canvasRef} className="hidden" />
-            </div>
-
-            <div className="flex items-center justify-center gap-4 p-8">
-              {!capturedImage ? (
-                <button 
-                  type="button"
-                  onClick={capturePhoto}
-                  className="flex h-16 w-16 items-center justify-center rounded-full bg-[#2D3436] text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
-                >
-                  <div className="h-12 w-12 rounded-full border-4 border-white/20" />
-                </button>
-              ) : (
-                <>
-                  <button 
-                    type="button"
-                    onClick={() => setCapturedImage(null)}
-                    className="flex items-center gap-2 rounded-xl border border-[#E4E4E2] px-6 py-3 text-sm font-bold uppercase tracking-widest text-[#636E72] hover:bg-[#F7F7F5]"
-                  >
-                    <RefreshCw size={18} />
-                    Repetir
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={uploadCapturedImage}
-                    disabled={isUploading}
-                    className="flex items-center gap-2 rounded-xl bg-[#2D3436] px-8 py-3 text-sm font-bold uppercase tracking-widest text-white shadow-lg hover:bg-black disabled:opacity-50"
-                  >
-                    {isUploading ? <Spinner className="h-4 w-4 animate-spin" /> : <Check size={18} />}
-                    {isUploading ? 'Subiendo...' : 'Usar Foto'}
-                  </button>
-                </>
-              )}
-            </div>
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
-  </>
-);
-}
-
-function Loader2({ className }: { className?: string }) {
-  return <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className={className}><Calculator size={20} /></motion.div>;
+  );
 }
 
 function CheckCircle({ size }: { size: number }) {

@@ -20,6 +20,7 @@ export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
   const [newComment, setNewComment] = useState('');
   const [loading, setLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
+  const [activeImage, setActiveImage] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribeGlaze = onSnapshot(doc(db, 'glazes', id), (doc) => {
@@ -116,11 +117,29 @@ export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
         <div className="lg:col-span-2 space-y-8">
           <div className="overflow-hidden rounded-[32px] bg-white shadow-sm">
             <img 
-              src={glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/800/600`} 
-              className="aspect-[16/9] w-full object-cover" 
+              src={activeImage || glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/800/600`} 
+              className="aspect-[16/9] w-full object-cover transition-all duration-300" 
               alt={glaze.name} 
               referrerPolicy="no-referrer"
             />
+            
+            {((glaze.mainImage ? 1 : 0) + (glaze.gallery?.length || 0)) > 1 && (
+              <div className="flex gap-3 overflow-x-auto border-b border-[#F4F4F2] p-6">
+                {[glaze.mainImage, ...(glaze.gallery || [])].filter(Boolean).map((img, idx) => (
+                  <button 
+                    key={idx}
+                    onClick={() => setActiveImage(img as string)}
+                    className={cn(
+                      "h-20 w-20 shrink-0 overflow-hidden rounded-xl border-2 transition-all",
+                      (activeImage || glaze.mainImage) === img ? "border-[#2D3436] opacity-100" : "border-transparent opacity-60 hover:opacity-100"
+                    )}
+                  >
+                    <img src={img as string} className="h-full w-full object-cover" alt="Thumbnail" referrerPolicy="no-referrer" />
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="p-8">
               <div className="flex items-start justify-between">
                 <div>

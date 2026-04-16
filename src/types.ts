@@ -46,6 +46,7 @@ export interface Glaze {
   createdAt: any;
   updatedAt: any;
   isValidated: boolean;
+  inventoryLevel?: number;
 }
 
 export interface Comment {

@@ -26,6 +26,23 @@ import GlazeList from './components/GlazeList';
 import GlazeForm from './components/GlazeForm';
 import GlazeDetail from './components/GlazeDetail';
 import AdminPanel from './components/AdminPanel';
+import SettingsPanel from './components/SettingsPanel';
+
+export interface GlazeFilters {
+  color?: string;
+  finish?: string;
+  texture?: string;
+  chemicalFamily?: string;
+  status?: string;
+}
+
+const FILTER_OPTIONS = {
+  colors: ['Blanco', 'Negro', 'Azul', 'Rojo', 'Amarillo', 'Verde', 'Naranja', 'Morado', 'Marrón', 'Gris', 'Transparente'],
+  finishes: ['Brillante', 'Mate', 'Satinado', 'Metálico', 'Opaco', 'Translúcido', 'Transparente', 'Cristalino', 'Texturizado'],
+  textures: ['Liso', 'Sedoso', 'Rugoso', 'Arenoso', 'Moteado', 'Craquelado', 'Lava / volcánico', 'Piel de naranja', 'Escurrido controlado'],
+  families: ['Borosilicato', 'Feldespático', 'Litio', 'Zinc', 'Magnesio', 'Cenizas', 'Alta alúmina', 'Baja expansión'],
+  statuses: [{ value: 'published', label: 'Validado / Publicado' }, { value: 'pending', label: 'En Pruebas' }, { value: 'draft', label: 'Borrador' }]
+};
 
 type View = 'dashboard' | 'repository' | 'create' | 'detail' | 'admin' | 'settings';
 
@@ -36,6 +53,10 @@ export default function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [selectedGlazeId, setSelectedGlazeId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilters, setActiveFilters] = useState<GlazeFilters>({});
+  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
 
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -257,14 +278,142 @@ export default function App() {
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#B2BEC3]" />
               <input 
                 type="text" 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Buscar esmaltes..." 
                 className="h-10 w-64 rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] pl-10 pr-4 text-sm outline-none transition-all focus:border-[#2D3436] focus:bg-white"
               />
             </div>
-            <button className="flex h-10 items-center gap-2 rounded-xl border border-[#E4E4E2] px-4 text-sm font-medium hover:bg-[#F7F7F5]">
+            <button 
+              onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
+              className={cn(
+                "flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium transition-all relative",
+                isFilterMenuOpen || Object.keys(activeFilters).length > 0 
+                  ? "border-[#2D3436] bg-[#2D3436] text-white" 
+                  : "border-[#E4E4E2] hover:bg-[#F7F7F5] bg-white text-[#2D3436]"
+              )}
+            >
               <Filter size={16} />
               Filtros
+              {Object.keys(activeFilters).length > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-white">
+                  {Object.keys(activeFilters).length}
+                </span>
+              )}
             </button>
+            <AnimatePresence>
+              {isFilterMenuOpen && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="absolute right-8 top-20 z-50 w-80 rounded-[24px] border border-[#E4E4E2] bg-white p-6 shadow-xl"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold tracking-tight">Filtros Activos</h3>
+                    <button onClick={() => setIsFilterMenuOpen(false)} className="text-[#B2BEC3] hover:text-[#2D3436]">
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Color</label>
+                      <select 
+                        value={activeFilters.color || ''}
+                        onChange={(e) => {
+                          const newFilters = { ...activeFilters };
+                          if (e.target.value) newFilters.color = e.target.value;
+                          else delete newFilters.color;
+                          setActiveFilters(newFilters);
+                        }}
+                        className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
+                      >
+                        <option value="">Cualquier Color</option>
+                        {FILTER_OPTIONS.colors.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Acabado</label>
+                      <select 
+                        value={activeFilters.finish || ''}
+                        onChange={(e) => {
+                          const newFilters = { ...activeFilters };
+                          if (e.target.value) newFilters.finish = e.target.value;
+                          else delete newFilters.finish;
+                          setActiveFilters(newFilters);
+                        }}
+                        className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
+                      >
+                        <option value="">Cualquier Acabado</option>
+                        {FILTER_OPTIONS.finishes.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Textura</label>
+                      <select 
+                        value={activeFilters.texture || ''}
+                        onChange={(e) => {
+                          const newFilters = { ...activeFilters };
+                          if (e.target.value) newFilters.texture = e.target.value;
+                          else delete newFilters.texture;
+                          setActiveFilters(newFilters);
+                        }}
+                        className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
+                      >
+                        <option value="">Cualquier Textura</option>
+                        {FILTER_OPTIONS.textures.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Familia Química</label>
+                      <select 
+                        value={activeFilters.chemicalFamily || ''}
+                        onChange={(e) => {
+                          const newFilters = { ...activeFilters };
+                          if (e.target.value) newFilters.chemicalFamily = e.target.value;
+                          else delete newFilters.chemicalFamily;
+                          setActiveFilters(newFilters);
+                        }}
+                        className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
+                      >
+                        <option value="">Cualquier Familia</option>
+                        {FILTER_OPTIONS.families.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Estado</label>
+                      <select 
+                        value={activeFilters.status || ''}
+                        onChange={(e) => {
+                          const newFilters = { ...activeFilters };
+                          if (e.target.value) newFilters.status = e.target.value;
+                          else delete newFilters.status;
+                          setActiveFilters(newFilters);
+                        }}
+                        className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
+                      >
+                        <option value="">Todos los Registros</option>
+                        {FILTER_OPTIONS.statuses.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 border-t border-[#F4F4F2] pt-4">
+                     <button 
+                      onClick={() => setActiveFilters({})}
+                      className="w-full rounded-xl py-2 text-sm font-medium text-[#636E72] hover:bg-[#F4F4F2] transition-all"
+                    >
+                      Limpiar Filtros
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </header>
 
@@ -280,6 +429,8 @@ export default function App() {
               {currentView === 'dashboard' && <Dashboard onNavigate={(view, id) => { setCurrentView(view); if(id) setSelectedGlazeId(id); }} />}
               {currentView === 'repository' && (
                 <GlazeList 
+                  searchQuery={searchQuery}
+                  activeFilters={activeFilters}
                   onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }} 
                   onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}
                 />
@@ -299,12 +450,7 @@ export default function App() {
                 />
               )}
               {currentView === 'admin' && <AdminPanel />}
-              {currentView === 'settings' && (
-                <div className="rounded-[24px] bg-white p-10 shadow-sm">
-                  <h3 className="text-lg font-semibold">Configuración</h3>
-                  <p className="mt-2 text-[#636E72]">Próximamente: Gestión de categorías y preferencias del taller.</p>
-                </div>
-              )}
+              {currentView === 'settings' && <SettingsPanel />}
             </motion.div>
           </AnimatePresence>
         </div>
