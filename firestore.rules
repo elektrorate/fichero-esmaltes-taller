@@ -110,6 +110,8 @@ service cloud.firestore {
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
         (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin()
       );
+
+      allow delete: if isAdmin();
     }
 
     match /glazes/{glazeId} {

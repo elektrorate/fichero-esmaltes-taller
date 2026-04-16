@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { db, OperationType, handleFirestoreError, auth } from '../lib/firebase';
-import { collection, onSnapshot, updateDoc, doc, query, orderBy, setDoc, serverTimestamp, addDoc } from 'firebase/firestore';
+import { collection, onSnapshot, updateDoc, doc, query, orderBy, setDoc, serverTimestamp, addDoc, deleteDoc } from 'firebase/firestore';
 import { UserProfile, UserRole, Glaze } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Shield, UserCheck, UserX, Mail, ShieldCheck, UserPlus, X, Loader2, Check, Database } from 'lucide-react';
+import { Mail, ShieldCheck, UserPlus, X, Loader2, Check, Database, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export default function AdminPanel() {
@@ -13,6 +13,7 @@ export default function AdminPanel() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', displayName: '', role: 'collaborator' as UserRole });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
 
   useEffect(() => {
     const qUsers = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
@@ -41,6 +42,30 @@ export default function AdminPanel() {
   };
 
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+
+    if (auth.currentUser?.uid === userToDelete.uid) {
+      setMessage({ type: 'error', text: 'No puedes eliminar tu propio usuario desde este panel.' });
+      setUserToDelete(null);
+      return;
+    }
+
+    setIsSubmitting(true);
+    setMessage(null);
+
+    try {
+      await deleteDoc(doc(db, 'users', userToDelete.uid));
+      setMessage({ type: 'success', text: `Usuario ${userToDelete.displayName} eliminado del panel.` });
+      setUserToDelete(null);
+    } catch (error) {
+      console.error(error);
+      setMessage({ type: 'error', text: 'No se pudo eliminar el usuario.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -301,7 +326,8 @@ export default function AdminPanel() {
                     </span>
                   </td>
                   <td className="py-4 text-right pr-4">
-                    <select 
+                    <div className="flex items-center justify-end gap-2">
+                      <select 
                       value={user.role}
                       onChange={(e) => handleRoleChange(user.uid, e.target.value as UserRole)}
                       className="rounded-lg border border-[#E4E4E2] bg-white px-3 py-1.5 text-xs outline-none focus:border-[#2D3436]"
@@ -310,7 +336,17 @@ export default function AdminPanel() {
                       <option value="editor">Editor Técnico</option>
                       <option value="reviewer">Revisor</option>
                       <option value="admin">Administrador</option>
-                    </select>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setUserToDelete(user)}
+                        disabled={auth.currentUser?.uid === user.uid}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 text-red-500 transition-all hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        title={auth.currentUser?.uid === user.uid ? 'No puedes eliminar tu propio usuario' : 'Eliminar usuario'}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -428,6 +464,54 @@ export default function AdminPanel() {
                   Actualizar Permisos
                 </button>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {userToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md rounded-[32px] bg-white p-8 shadow-xl"
+            >
+              <div className="mb-6 flex items-center justify-between">
+                <h4 className="text-xl font-semibold">Eliminar Usuario</h4>
+                <button onClick={() => setUserToDelete(null)} className="text-[#B2BEC3] hover:text-[#2D3436]">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <p className="text-sm text-[#636E72]">
+                  Vas a eliminar del panel a <strong className="text-[#2D3436]">{userToDelete.displayName}</strong>.
+                </p>
+                <p className="text-xs text-[#B2BEC3]">
+                  Esto borra su documento en <code>users</code>, pero no elimina su cuenta de autenticación de Google/Firebase.
+                </p>
+              </div>
+
+              <div className="mt-8 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setUserToDelete(null)}
+                  className="flex-1 rounded-xl border border-[#E4E4E2] px-4 py-3 text-sm font-medium hover:bg-[#F7F7F5]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteUser}
+                  disabled={isSubmitting}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 size={16} />}
+                  Eliminar
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

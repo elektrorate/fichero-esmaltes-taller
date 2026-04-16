@@ -148,7 +148,15 @@ export default function App() {
       await signInWithPopup(auth, googleProvider);
     } catch (error: any) {
       console.error('Login error:', error);
-      if (error.code === 'auth/popup-blocked') {
+      if (error.code === 'auth/unauthorized-domain') {
+        setLoginError('Este dominio no está autorizado en Firebase Authentication. Añade este dominio en Firebase Console > Authentication > Settings > Authorized domains.');
+      } else if (error.code === 'auth/operation-not-allowed') {
+        setLoginError('El acceso con Google no está habilitado en Firebase Authentication para este proyecto.');
+      } else if (error.code === 'auth/invalid-api-key') {
+        setLoginError('La configuración de Firebase no es válida. Revisa la apiKey del proyecto.');
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        setLoginError('La ventana de inicio de sesión se cerró antes de completar el acceso.');
+      } else if (error.code === 'auth/popup-blocked') {
         setLoginError('El navegador bloqueó la ventana emergente. Por favor, permite las ventanas emergentes para este sitio.');
       } else if (error.code === 'auth/cancelled-popup-request') {
         // Ignore
