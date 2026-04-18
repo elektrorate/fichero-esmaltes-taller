@@ -27,6 +27,8 @@ import GlazeForm from './components/GlazeForm';
 import GlazeDetail from './components/GlazeDetail';
 import AdminPanel from './components/AdminPanel';
 import SettingsPanel from './components/SettingsPanel';
+import MobileApp from './mobile/MobileApp';
+import { useIsMobile } from './mobile/hooks/useIsMobile';
 
 export interface GlazeFilters {
   color?: string;
@@ -47,6 +49,7 @@ const FILTER_OPTIONS = {
 type View = 'dashboard' | 'repository' | 'create' | 'detail' | 'admin' | 'settings' | 'inventory-alerts';
 
 export default function App() {
+  const isMobile = useIsMobile();
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,9 +59,14 @@ export default function App() {
   
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilters, setActiveFilters] = useState<GlazeFilters>({});
+  const [pendingFilters, setPendingFilters] = useState<GlazeFilters>({});
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
 
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  if (isMobile) {
+    return <MobileApp />;
+  }
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -149,6 +157,33 @@ export default function App() {
     } catch (error) {
       console.error('Logout error:', error);
     }
+  };
+
+  const toggleFilterMenu = () => {
+    setIsFilterMenuOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setPendingFilters(activeFilters);
+      }
+      return next;
+    });
+  };
+
+  const updatePendingFilter = (key: keyof GlazeFilters, value: string) => {
+    setPendingFilters((prev) => {
+      const next = { ...prev };
+      if (value) {
+        next[key] = value;
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const applyFilters = () => {
+    setActiveFilters(pendingFilters);
+    setIsFilterMenuOpen(false);
   };
 
   if (loading) {
@@ -286,7 +321,7 @@ export default function App() {
               />
             </div>
             <button 
-              onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
+              onClick={toggleFilterMenu}
               className={cn(
                 "flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium transition-all relative",
                 isFilterMenuOpen || Object.keys(activeFilters).length > 0 
@@ -321,13 +356,8 @@ export default function App() {
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Color</label>
                       <select 
-                        value={activeFilters.color || ''}
-                        onChange={(e) => {
-                          const newFilters = { ...activeFilters };
-                          if (e.target.value) newFilters.color = e.target.value;
-                          else delete newFilters.color;
-                          setActiveFilters(newFilters);
-                        }}
+                        value={pendingFilters.color || ''}
+                        onChange={(e) => updatePendingFilter('color', e.target.value)}
                         className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
                       >
                         <option value="">Cualquier Color</option>
@@ -338,13 +368,8 @@ export default function App() {
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Acabado</label>
                       <select 
-                        value={activeFilters.finish || ''}
-                        onChange={(e) => {
-                          const newFilters = { ...activeFilters };
-                          if (e.target.value) newFilters.finish = e.target.value;
-                          else delete newFilters.finish;
-                          setActiveFilters(newFilters);
-                        }}
+                        value={pendingFilters.finish || ''}
+                        onChange={(e) => updatePendingFilter('finish', e.target.value)}
                         className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
                       >
                         <option value="">Cualquier Acabado</option>
@@ -355,13 +380,8 @@ export default function App() {
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Textura</label>
                       <select 
-                        value={activeFilters.texture || ''}
-                        onChange={(e) => {
-                          const newFilters = { ...activeFilters };
-                          if (e.target.value) newFilters.texture = e.target.value;
-                          else delete newFilters.texture;
-                          setActiveFilters(newFilters);
-                        }}
+                        value={pendingFilters.texture || ''}
+                        onChange={(e) => updatePendingFilter('texture', e.target.value)}
                         className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
                       >
                         <option value="">Cualquier Textura</option>
@@ -372,13 +392,8 @@ export default function App() {
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Familia Química</label>
                       <select 
-                        value={activeFilters.chemicalFamily || ''}
-                        onChange={(e) => {
-                          const newFilters = { ...activeFilters };
-                          if (e.target.value) newFilters.chemicalFamily = e.target.value;
-                          else delete newFilters.chemicalFamily;
-                          setActiveFilters(newFilters);
-                        }}
+                        value={pendingFilters.chemicalFamily || ''}
+                        onChange={(e) => updatePendingFilter('chemicalFamily', e.target.value)}
                         className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
                       >
                         <option value="">Cualquier Familia</option>
@@ -389,13 +404,8 @@ export default function App() {
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Estado</label>
                       <select 
-                        value={activeFilters.status || ''}
-                        onChange={(e) => {
-                          const newFilters = { ...activeFilters };
-                          if (e.target.value) newFilters.status = e.target.value;
-                          else delete newFilters.status;
-                          setActiveFilters(newFilters);
-                        }}
+                        value={pendingFilters.status || ''}
+                        onChange={(e) => updatePendingFilter('status', e.target.value)}
                         className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436]"
                       >
                         <option value="">Todos los Registros</option>
@@ -405,12 +415,23 @@ export default function App() {
                   </div>
 
                   <div className="mt-6 border-t border-[#F4F4F2] pt-4">
+                    <div className="flex items-center gap-2">
+                    <button 
+                      onClick={applyFilters}
+                      className="flex-1 rounded-xl bg-[#2D3436] py-2 text-sm font-medium text-white hover:bg-[#000] transition-all"
+                    >
+                      Go
+                    </button>
                      <button 
-                      onClick={() => setActiveFilters({})}
-                      className="w-full rounded-xl py-2 text-sm font-medium text-[#636E72] hover:bg-[#F4F4F2] transition-all"
+                      onClick={() => {
+                        setPendingFilters({});
+                        setActiveFilters({});
+                      }}
+                      className="flex-1 rounded-xl py-2 text-sm font-medium text-[#636E72] hover:bg-[#F4F4F2] transition-all"
                     >
                       Limpiar Filtros
                     </button>
+                    </div>
                   </div>
                 </motion.div>
               )}
