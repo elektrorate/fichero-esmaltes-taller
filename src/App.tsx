@@ -27,8 +27,6 @@ import GlazeForm from './components/GlazeForm';
 import GlazeDetail from './components/GlazeDetail';
 import AdminPanel from './components/AdminPanel';
 import SettingsPanel from './components/SettingsPanel';
-import MobileApp from './mobile/MobileApp';
-import { useIsMobile } from './mobile/hooks/useIsMobile';
 
 export interface GlazeFilters {
   color?: string;
@@ -49,13 +47,13 @@ const FILTER_OPTIONS = {
 type View = 'dashboard' | 'repository' | 'create' | 'detail' | 'admin' | 'settings' | 'inventory-alerts';
 
 export default function App() {
-  const isMobile = useIsMobile();
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [selectedGlazeId, setSelectedGlazeId] = useState<string | null>(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 1024);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilters, setActiveFilters] = useState<GlazeFilters>({});
@@ -63,10 +61,6 @@ export default function App() {
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
 
   const [loginError, setLoginError] = useState<string | null>(null);
-
-  if (isMobile) {
-    return <MobileApp />;
-  }
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -132,6 +126,20 @@ export default function App() {
     });
 
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 1024px)');
+    const handleViewportChange = (event: MediaQueryListEvent) => {
+      setIsDesktop(event.matches);
+      if (event.matches) {
+        setIsSidebarOpen(true);
+      }
+    };
+
+    setIsDesktop(mediaQuery.matches);
+    mediaQuery.addEventListener('change', handleViewportChange);
+    return () => mediaQuery.removeEventListener('change', handleViewportChange);
   }, []);
 
   const handleLogin = async () => {
@@ -244,14 +252,24 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-full bg-[#F7F7F5] text-[#2D3436]">
+      {isSidebarOpen && (
+        <button
+          onClick={() => setIsSidebarOpen(false)}
+          className="fixed inset-0 z-30 bg-black/30 lg:hidden"
+          aria-label="Cerrar menú"
+        />
+      )}
       {/* Sidebar */}
-      <motion.aside
-        initial={false}
-        animate={{ width: isSidebarOpen ? 280 : 80 }}
-        className="relative flex flex-col border-r border-[#E4E4E2] bg-white transition-all duration-300 ease-in-out"
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex w-[280px] flex-col border-r border-[#E4E4E2] bg-white transition-transform duration-300 ease-in-out lg:relative lg:z-0",
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+          !isSidebarOpen && "lg:w-20",
+          isSidebarOpen && "lg:w-[280px]"
+        )}
       >
         <div className="flex h-20 items-center justify-between px-6">
-          {isSidebarOpen && (
+          {(isSidebarOpen || isDesktop) && (
             <span className="font-sans text-lg font-semibold tracking-tight">Esmaltes.</span>
           )}
           <button 
@@ -278,37 +296,45 @@ export default function App() {
               )}
             >
               <item.icon size={20} className={cn(currentView === item.id ? "text-[#2D3436]" : "text-[#B2BEC3]")} />
-              {isSidebarOpen && <span>{item.label}</span>}
+              {(isSidebarOpen || isDesktop) && <span>{item.label}</span>}
             </button>
           ))}
         </nav>
 
         <div className="border-t border-[#E4E4E2] p-4">
-          <div className={cn("flex items-center gap-3", !isSidebarOpen && "justify-center")}>
+          <div className={cn("flex items-center gap-3", !isSidebarOpen && "justify-center lg:justify-center")}>
             <img 
               src={profile?.photoURL || "https://picsum.photos/seed/user/40/40"} 
               className="h-9 w-9 rounded-full object-cover ring-2 ring-[#F4F4F2]" 
               alt="Profile" 
             />
-            {isSidebarOpen && (
+            {(isSidebarOpen || isDesktop) && (
               <div className="flex-1 overflow-hidden">
                 <p className="truncate text-sm font-medium">{profile?.displayName}</p>
                 <p className="truncate text-xs text-[#636E72] capitalize">{profile?.role}</p>
               </div>
             )}
-            {isSidebarOpen && (
+            {(isSidebarOpen || isDesktop) && (
               <button onClick={handleLogout} className="rounded-lg p-1.5 text-[#636E72] hover:bg-[#F4F4F2] hover:text-red-500">
                 <LogOut size={18} />
               </button>
             )}
           </div>
         </div>
-      </motion.aside>
+      </aside>
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
-        <header className="sticky top-0 z-10 flex h-20 items-center justify-between border-b border-[#E4E4E2] bg-white/80 px-8 backdrop-blur-md">
-          <h2 className="text-xl font-semibold tracking-tight">{headerTitle}</h2>
+        <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-[#E4E4E2] bg-white/80 px-4 backdrop-blur-md lg:h-20 lg:px-8">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="rounded-lg p-1.5 hover:bg-[#F4F4F2] lg:hidden"
+            >
+              <Menu size={20} />
+            </button>
+            <h2 className="text-base font-semibold tracking-tight lg:text-xl">{headerTitle}</h2>
+          </div>
           <div className="flex items-center gap-4">
             <div className="relative hidden md:block">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#B2BEC3]" />
@@ -439,7 +465,7 @@ export default function App() {
           </div>
         </header>
 
-        <div className="p-8">
+        <div className="p-4 lg:p-8">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentView + (selectedGlazeId || '')}
