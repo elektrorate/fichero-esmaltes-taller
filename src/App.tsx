@@ -199,7 +199,7 @@ export default function App() {
     { id: 'repository', label: 'Repositorio', icon: Database },
     { id: 'create', label: 'Nueva Ficha', icon: PlusCircle },
     { id: 'admin', label: 'Administración', icon: Users, roles: ['admin'] as UserRole[] },
-    { id: 'settings', label: 'Configuración', icon: Settings },
+    { id: 'settings', label: 'Inventario', icon: Settings },
   ];
 
   const filteredNavItems = navItems.filter(item => !item.roles || (profile && item.roles.includes(profile.role)));
