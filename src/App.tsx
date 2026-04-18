@@ -44,7 +44,7 @@ const FILTER_OPTIONS = {
   statuses: [{ value: 'published', label: 'Validado / Publicado' }, { value: 'pending', label: 'En Pruebas' }, { value: 'draft', label: 'Borrador' }]
 };
 
-type View = 'dashboard' | 'repository' | 'create' | 'detail' | 'admin' | 'settings';
+type View = 'dashboard' | 'repository' | 'create' | 'detail' | 'admin' | 'settings' | 'inventory-alerts';
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -203,6 +203,9 @@ export default function App() {
   ];
 
   const filteredNavItems = navItems.filter(item => !item.roles || (profile && item.roles.includes(profile.role)));
+  const headerTitle = currentView === 'inventory-alerts'
+    ? 'Inventario en Alerta'
+    : navItems.find(i => i.id === currentView)?.label || 'Detalle';
 
   return (
     <div className="flex h-screen w-full bg-[#F7F7F5] text-[#2D3436]">
@@ -270,9 +273,7 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
         <header className="sticky top-0 z-10 flex h-20 items-center justify-between border-b border-[#E4E4E2] bg-white/80 px-8 backdrop-blur-md">
-          <h2 className="text-xl font-semibold tracking-tight">
-            {navItems.find(i => i.id === currentView)?.label || 'Detalle'}
-          </h2>
+          <h2 className="text-xl font-semibold tracking-tight">{headerTitle}</h2>
           <div className="flex items-center gap-4">
             <div className="relative hidden md:block">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#B2BEC3]" />
@@ -426,12 +427,28 @@ export default function App() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
             >
-              {currentView === 'dashboard' && <Dashboard onNavigate={(view, id) => { setCurrentView(view); if(id) setSelectedGlazeId(id); }} />}
+              {currentView === 'dashboard' && (
+                <Dashboard
+                  onNavigate={(view, id) => {
+                    setCurrentView(view as View);
+                    if (id) setSelectedGlazeId(id);
+                  }}
+                />
+              )}
               {currentView === 'repository' && (
                 <GlazeList 
                   searchQuery={searchQuery}
                   activeFilters={activeFilters}
                   onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }} 
+                  onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}
+                />
+              )}
+              {currentView === 'inventory-alerts' && (
+                <GlazeList
+                  searchQuery={searchQuery}
+                  activeFilters={activeFilters}
+                  highlightInventoryAlerts
+                  onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }}
                   onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}
                 />
               )}

@@ -63,7 +63,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             </div>
           </div>
           <button 
-            onClick={() => onNavigate('settings')}
+            onClick={() => onNavigate('inventory-alerts')}
             className="shrink-0 rounded-xl bg-red-600 px-6 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 transition"
           >
             Revisar Inventario

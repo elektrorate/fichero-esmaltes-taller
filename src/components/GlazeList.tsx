@@ -11,11 +11,18 @@ import { cn } from '../lib/utils';
 interface GlazeListProps {
   searchQuery?: string;
   activeFilters?: any;
+  highlightInventoryAlerts?: boolean;
   onSelect: (id: string) => void;
   onEdit: (id: string) => void;
 }
 
-export default function GlazeList({ searchQuery = '', activeFilters = {}, onSelect, onEdit }: GlazeListProps) {
+export default function GlazeList({
+  searchQuery = '',
+  activeFilters = {},
+  highlightInventoryAlerts = false,
+  onSelect,
+  onEdit
+}: GlazeListProps) {
   const [glazes, setGlazes] = useState<Glaze[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -53,6 +60,13 @@ export default function GlazeList({ searchQuery = '', activeFilters = {}, onSele
 
     return true;
   });
+  const inventoryAlertThreshold = 25;
+  const alertGlazes = filteredGlazes.filter(
+    glaze => glaze.inventoryLevel !== undefined && glaze.inventoryLevel <= inventoryAlertThreshold
+  );
+  const regularGlazes = filteredGlazes.filter(
+    glaze => glaze.inventoryLevel === undefined || glaze.inventoryLevel > inventoryAlertThreshold
+  );
 
   const handleBulkExport = async () => {
     const selectedGlazes = filteredGlazes.filter(g => selectedIds.includes(g.id!));
@@ -135,12 +149,121 @@ export default function GlazeList({ searchQuery = '', activeFilters = {}, onSele
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-        {filteredGlazes.length === 0 ? (
-          <div className="col-span-full py-20 text-center text-[#636E72]">
-            <p>No se encontraron esmaltes que coincidan con la búsqueda y filtros.</p>
-          </div>
-        ) : filteredGlazes.map((glaze, i) => (
+      {filteredGlazes.length === 0 ? (
+        <div className="col-span-full py-20 text-center text-[#636E72]">
+          <p>No se encontraron esmaltes que coincidan con la búsqueda y filtros.</p>
+        </div>
+      ) : (
+        <>
+          {highlightInventoryAlerts && (
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-red-100 bg-red-50/80 p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-red-700">Productos en Alerta</h3>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-red-700">
+                    {alertGlazes.length} producto{alertGlazes.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                {alertGlazes.length === 0 && (
+                  <p className="mt-3 text-sm text-red-700">No hay productos en alerta con los filtros actuales.</p>
+                )}
+              </div>
+              {alertGlazes.length > 0 && (
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+                  {alertGlazes.map((glaze, i) => (
+                    <div key={glaze.id} className="rounded-[24px] ring-1 ring-red-100">
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: i * 0.05 }}
+                        onClick={() => isSelectionMode && toggleSelection(glaze.id!)}
+                        className={cn(
+                          "group relative overflow-hidden rounded-[24px] bg-white shadow-sm transition-all hover:shadow-md",
+                          isSelectionMode && "cursor-pointer ring-2 transition-all",
+                          isSelectionMode && selectedIds.includes(glaze.id!) ? "ring-[#2D3436]" : "ring-transparent"
+                        )}
+                      >
+                        {isSelectionMode && (
+                          <div className="absolute left-4 top-4 z-10">
+                            {selectedIds.includes(glaze.id!) ? (
+                              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#2D3436] text-white shadow-lg">
+                                <Check size={14} />
+                              </div>
+                            ) : (
+                              <div className="h-6 w-6 rounded-full border-2 border-white/50 bg-black/20 backdrop-blur-md" />
+                            )}
+                          </div>
+                        )}
+                        <div className="aspect-[4/3] overflow-hidden">
+                          <img
+                            src={glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/400/300`}
+                            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
+                            alt={glaze.name}
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+                          {!isSelectionMode && (
+                            <div className="absolute bottom-4 left-4 right-4 flex translate-y-4 items-center justify-between opacity-0 transition-all group-hover:translate-y-0 group-hover:opacity-100">
+                              <div className="flex gap-2">
+                                <button onClick={(e) => { e.stopPropagation(); onSelect(glaze.id!); }} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md hover:bg-white/40">
+                                  <Eye size={18} />
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); onEdit(glaze.id!); }} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md hover:bg-white/40">
+                                  <Edit2 size={18} />
+                                </button>
+                              </div>
+                              <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur-md">
+                                {STATUS_LABELS[glaze.status]}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-6">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h4 className="text-lg font-semibold tracking-tight">{glaze.name}</h4>
+                              <p className="text-xs font-medium text-[#B2BEC3] uppercase tracking-widest mt-0.5">{glaze.code}</p>
+                            </div>
+                            {!isSelectionMode && (
+                              <div className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[#F7F7F5]">
+                                <MoreVertical size={16} className="text-[#B2BEC3]" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-[#F4F4F2] px-2.5 py-1 text-[10px] font-medium text-[#636E72]">
+                              <Tag size={10} /> {glaze.finish}
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-[#F4F4F2] px-2.5 py-1 text-[10px] font-medium text-[#636E72]">
+                              <div className="h-2 w-2 rounded-full bg-blue-400" /> {glaze.color}
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700">
+                              Inventario {glaze.inventoryLevel}%
+                            </span>
+                          </div>
+                          <div className="mt-6 flex items-center justify-between border-t border-[#F4F4F2] pt-4">
+                            <div className="flex items-center gap-2">
+                              <div className="h-6 w-6 rounded-full bg-[#E4E4E2]" />
+                              <span className="text-[11px] font-medium text-[#636E72]">{glaze.authorName}</span>
+                            </div>
+                            <span className="text-[11px] text-[#B2BEC3]">
+                              {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
+                            </span>
+                          </div>
+                        </div>
+                      </motion.div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <div className="space-y-3">
+            {highlightInventoryAlerts && (
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-[#636E72]">Resto del Inventario</h3>
+            )}
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {(highlightInventoryAlerts ? regularGlazes : filteredGlazes).map((glaze, i) => (
           <motion.div
             key={glaze.id}
             initial={{ opacity: 0, scale: 0.95 }}
@@ -230,8 +353,11 @@ export default function GlazeList({ searchQuery = '', activeFilters = {}, onSele
               </div>
             </div>
           </motion.div>
-        ))}
-      </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
