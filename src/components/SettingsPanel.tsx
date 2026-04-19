@@ -1,111 +1,253 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { collection, doc, onSnapshot, query, updateDoc } from 'firebase/firestore';
+import { Boxes, PackageSearch, Search, SlidersHorizontal } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, query, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { Glaze } from '../types';
-import { Settings, PackageSearch } from 'lucide-react';
 import { cn } from '../lib/utils';
+
+type InventoryFilter = 'all' | 'high' | 'medium' | 'low';
+
+const INVENTORY_STEPS = [0, 25, 50, 75, 100];
 
 export default function SettingsPanel() {
   const [glazes, setGlazes] = useState<Glaze[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<InventoryFilter>('all');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
 
   useEffect(() => {
     const q = query(collection(db, 'glazes'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setGlazes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Glaze)));
+      setGlazes(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as Glaze)));
       setLoading(false);
     });
+
     return () => unsubscribe();
   }, []);
 
   const updateInventory = async (id: string, level: number) => {
     try {
       await updateDoc(doc(db, 'glazes', id), {
-        inventoryLevel: level
+        inventoryLevel: level,
       });
     } catch (error) {
       console.error('Error updating inventory:', error);
     }
   };
 
-  const getInventoryColor = (level?: number) => {
-    if (level === undefined) return 'text-[#B2BEC3] bg-gray-100'; // No data
-    if (level <= 0) return 'text-red-700 bg-red-100';
-    if (level <= 25) return 'text-amber-700 bg-amber-100';
-    if (level <= 50) return 'text-yellow-700 bg-yellow-100';
-    return 'text-emerald-700 bg-emerald-100';
+  const getInventoryTone = (level?: number) => {
+    if (level === undefined) {
+      return {
+        badge: 'bg-slate-200 text-slate-600',
+        bar: 'bg-slate-400',
+      };
+    }
+
+    if (level <= 25) {
+      return {
+        badge: 'bg-red-100 text-red-600',
+        bar: 'bg-red-500',
+      };
+    }
+
+    if (level <= 50) {
+      return {
+        badge: 'bg-slate-200 text-slate-700',
+        bar: 'bg-slate-500',
+      };
+    }
+
+    return {
+      badge: 'bg-emerald-100 text-emerald-600',
+      bar: 'bg-emerald-500',
+    };
   };
 
-  if (loading) return <div className="py-20 text-center text-[#636E72]">Cargando inventario...</div>;
+  const filteredGlazes = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    return glazes.filter((glaze) => {
+      const matchesQuery =
+        normalizedQuery.length === 0 ||
+        glaze.name.toLowerCase().includes(normalizedQuery) ||
+        glaze.code.toLowerCase().includes(normalizedQuery);
+
+      const level = glaze.inventoryLevel;
+      const matchesFilter =
+        activeFilter === 'all' ||
+        (activeFilter === 'high' && level !== undefined && level > 50) ||
+        (activeFilter === 'medium' && level !== undefined && level > 25 && level <= 50) ||
+        (activeFilter === 'low' && (level === undefined || level <= 25));
+
+      return matchesQuery && matchesFilter;
+    });
+  }, [activeFilter, glazes, searchQuery]);
+
+  if (loading) {
+    return <div className="py-20 text-center text-[#636E72]">Cargando inventario...</div>;
+  }
 
   return (
-    <div className="space-y-8">
-      <div className="rounded-[32px] bg-white p-8 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="rounded-xl bg-[#F4F4F2] p-3 text-[#2D3436]">
-            <Settings size={24} />
+    <div className="space-y-4 bg-[#F5F5F5]">
+      <section className="rounded-[20px] border border-white/70 bg-[#F1F1F1] px-5 py-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+        <div className="flex items-start gap-4">
+          <div className="rounded-2xl bg-white p-3 text-[#2D3436] shadow-sm">
+            <Boxes size={22} />
           </div>
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight">Configuración e Inventario</h2>
-            <p className="text-sm text-[#636E72]">Administra la existencia física de tus esmaltes.</p>
+          <div className="min-w-0">
+            <h2 className="text-[17px] font-semibold tracking-tight text-[#1F2933]">
+              Configuración de Inventario
+            </h2>
+            <p className="mt-1 text-sm leading-relaxed text-[#66707A]">
+              Ajusta y revisa tus niveles de stock para mantener el taller siempre abastecido.
+            </p>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="rounded-[32px] bg-white p-8 shadow-sm space-y-6">
-        <h3 className="text-lg font-semibold tracking-tight flex items-center gap-2">
-          <PackageSearch size={20} />
-          Niveles de Inventario
-        </h3>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#F4F4F2] text-left text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">
-                <th className="pb-4 pl-4">Esmalte</th>
-                <th className="pb-4">Código</th>
-                <th className="pb-4">Estado Actual</th>
-                <th className="pb-4 text-right pr-4">Ajustar Nivel</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#F4F4F2]">
-              {glazes.map((glaze) => (
-                <tr key={glaze.id} className="transition-all hover:bg-[#F7F7F5]/50">
-                  <td className="py-4 pl-4 font-medium flex items-center gap-3">
-                    <img 
-                      src={glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/40/40`} 
-                      className="h-10 w-10 rounded-lg object-cover" 
-                      alt="" 
-                      referrerPolicy="no-referrer"
-                    />
-                    {glaze.name}
-                  </td>
-                  <td className="py-4 font-mono text-xs text-[#636E72]">{glaze.code}</td>
-                  <td className="py-4">
-                    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wider", getInventoryColor(glaze.inventoryLevel))}>
-                      {glaze.inventoryLevel === undefined ? 'Sin datos' : `${glaze.inventoryLevel}%`}
-                    </span>
-                  </td>
-                  <td className="py-4 pr-4">
-                    <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => updateInventory(glaze.id!, 100)} className={cn("rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all hover:bg-[#2D3436] hover:text-white", glaze.inventoryLevel === 100 ? "bg-[#2D3436] text-white border-transparent" : "border border-[#E4E4E2] bg-white")}>100%</button>
-                      <button onClick={() => updateInventory(glaze.id!, 75)} className={cn("rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all hover:bg-[#2D3436] hover:text-white", glaze.inventoryLevel === 75 ? "bg-[#2D3436] text-white border-transparent" : "border border-[#E4E4E2] bg-white")}>75%</button>
-                      <button onClick={() => updateInventory(glaze.id!, 50)} className={cn("rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all hover:bg-[#2D3436] hover:text-white", glaze.inventoryLevel === 50 ? "bg-[#2D3436] text-white border-transparent" : "border border-[#E4E4E2] bg-white")}>50%</button>
-                      <button onClick={() => updateInventory(glaze.id!, 25)} className={cn("rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all hover:bg-amber-600 hover:border-amber-600 hover:text-white", glaze.inventoryLevel === 25 ? "bg-amber-600 border-amber-600 text-white" : "border border-[#E4E4E2] bg-white")}>25%</button>
-                      <button onClick={() => updateInventory(glaze.id!, 0)} className={cn("rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all hover:bg-red-600 hover:border-red-600 hover:text-white", glaze.inventoryLevel === 0 ? "bg-red-600 border-red-600 text-white" : "border border-[#E4E4E2] bg-white")}>0%</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {glazes.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="py-8 text-center text-[#B2BEC3] text-sm">No hay esmaltes registrados todavía.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      <section className="sticky top-0 z-[5] -mx-1 rounded-[20px] bg-[#F5F5F5]/95 px-1 py-1 backdrop-blur">
+        <div className="flex items-center gap-3">
+          <label className="relative flex-1">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#98A2AD]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search glazes..."
+              className="h-12 w-full rounded-xl border border-[#E3E7EB] bg-white pl-11 pr-4 text-sm text-[#1F2933] outline-none transition-all focus:border-[#2D3436] focus:shadow-[0_0_0_3px_rgba(45,52,54,0.08)]"
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={() => setIsFilterOpen((prev) => !prev)}
+            className={cn(
+              'flex h-12 w-12 items-center justify-center rounded-xl border transition-all',
+              isFilterOpen || activeFilter !== 'all'
+                ? 'border-[#2D3436] bg-[#EEF1F2] text-[#2D3436]'
+                : 'border-[#E3E7EB] bg-white text-[#67727D]'
+            )}
+            aria-label="Filtrar inventario"
+          >
+            <SlidersHorizontal size={18} />
+          </button>
         </div>
-      </div>
+
+        {isFilterOpen && (
+          <div className="mt-3 flex flex-wrap gap-2 rounded-2xl bg-white p-3 shadow-[0_12px_24px_rgba(15,23,42,0.08)]">
+            {[
+              { key: 'all', label: 'Todos' },
+              { key: 'high', label: 'Alto' },
+              { key: 'medium', label: 'Medio' },
+              { key: 'low', label: 'Bajo' },
+            ].map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setActiveFilter(option.key as InventoryFilter)}
+                className={cn(
+                  'rounded-xl px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-all',
+                  activeFilter === option.key
+                    ? 'bg-[#2D3436] text-white'
+                    : 'border border-[#E3E7EB] bg-[#F8F9FA] text-[#5E6973]'
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-4">
+        {filteredGlazes.length === 0 ? (
+          <div className="rounded-2xl bg-white p-8 text-center shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F2F4F5] text-[#83909B]">
+              <PackageSearch size={20} />
+            </div>
+            <p className="text-sm font-medium text-[#4F5B66]">No encontramos esmaltes con ese criterio.</p>
+          </div>
+        ) : (
+          filteredGlazes.map((glaze) => {
+            const level = glaze.inventoryLevel ?? 0;
+            const tone = getInventoryTone(glaze.inventoryLevel);
+
+            return (
+              <article
+                key={glaze.id}
+                className="rounded-2xl bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
+              >
+                <div className="flex items-start gap-3">
+                  <img
+                    src={glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/96/96`}
+                    alt={glaze.name}
+                    referrerPolicy="no-referrer"
+                    className="h-16 w-16 rounded-lg object-cover"
+                  />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-[15px] font-semibold leading-tight text-[#1F2933]">
+                          {glaze.name}
+                        </h3>
+                        <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.18em] text-[#9AA4AE]">
+                          #{glaze.code}
+                        </p>
+                      </div>
+
+                      <span
+                        className={cn(
+                          'shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide',
+                          tone.badge
+                        )}
+                      >
+                        {glaze.inventoryLevel === undefined ? 'Sin datos' : `${glaze.inventoryLevel}%`}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[#E8ECEF]">
+                      <div
+                        className={cn('h-full rounded-full transition-[width] duration-300 ease-out', tone.bar)}
+                        style={{ width: `${Math.max(0, Math.min(level, 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9AA4AE]">
+                    Adjust level
+                  </p>
+
+                  <div className="mt-3 grid grid-cols-5 gap-2">
+                    {INVENTORY_STEPS.map((step) => {
+                      const isActive = glaze.inventoryLevel === step;
+
+                      return (
+                        <button
+                          key={step}
+                          type="button"
+                          onClick={() => updateInventory(glaze.id!, step)}
+                          className={cn(
+                            'rounded-lg border px-0 py-2 text-xs font-semibold transition-all active:scale-[0.98]',
+                            isActive
+                              ? 'border-[#2D3436] bg-[#2D3436] text-white shadow-sm'
+                              : 'border-[#E3E7EB] bg-[#F7F8F9] text-[#596570]'
+                          )}
+                        >
+                          {step}%
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </article>
+            );
+          })
+        )}
+      </section>
     </div>
   );
 }
