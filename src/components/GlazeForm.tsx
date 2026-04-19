@@ -19,7 +19,7 @@ const CATEGORIES = {
     { label: 'Mate', code: 'MT' },
     { label: 'Satinado', code: 'ST' },
     { label: 'Opaco', code: 'OP' },
-    { label: 'Translúcido', code: 'TR' },
+    { label: 'TranslÃƒÂºcido', code: 'TR' },
     { label: 'Cristalino', code: 'CR' },
     { label: 'Moteado', code: 'SP' },
     { label: 'Texturizado', code: 'TX' },
@@ -32,10 +32,10 @@ const CATEGORIES = {
     { label: 'Azul', code: 'A' },
     { label: 'Verde', code: 'V' },
     { label: 'Rojo', code: 'R' },
-    { label: 'Marrón', code: 'M' },
+    { label: 'MarrÃƒÂ³n', code: 'M' },
     { label: 'Amarillo', code: 'Y' },
     { label: 'Naranja', code: 'O' },
-    { label: 'Púrpura', code: 'P' },
+    { label: 'PÃƒÂºrpura', code: 'P' },
     { label: 'Tierra / terracota', code: 'T' },
     { label: 'Crema / beige', code: 'C' },
     { label: 'Transparente', code: 'TR' }
@@ -44,28 +44,28 @@ const CATEGORIES = {
     { label: 'Apto para vajilla / food safe', code: 'FS' },
     { label: 'Decorativo', code: 'DC' }
   ],
-  texture: ['Liso', 'Sedoso', 'Rugoso', 'Arenoso', 'Moteado', 'Craquelado', 'Lava / volcánico', 'Piel de naranja', 'Escurrido controlado'],
-  application: ['Inmersión', 'Vertido', 'Pincel', 'Aerógrafo', 'Pulverizado', 'Capa única', 'Multicapa'],
-  family: ['Borosilicato', 'Feldespático', 'Litio', 'Zinc', 'Magnesio', 'Cenizas', 'Alta alúmina', 'Baja expansión']
+  texture: ['Liso', 'Sedoso', 'Rugoso', 'Arenoso', 'Moteado', 'Craquelado', 'Lava / volcÃƒÂ¡nico', 'Piel de naranja', 'Escurrido controlado'],
+  application: ['InmersiÃƒÂ³n', 'Vertido', 'Pincel', 'AerÃƒÂ³grafo', 'Pulverizado', 'Capa ÃƒÂºnica', 'Multicapa'],
+  family: ['Borosilicato', 'FeldespÃƒÂ¡tico', 'Litio', 'Zinc', 'Magnesio', 'Cenizas', 'Alta alÃƒÂºmina', 'Baja expansiÃƒÂ³n']
 };
 
 const RAW_MATERIALS = [
-  "Sílice", "Caolín EPK", "Caolín Grolleg", "Caolín calcinado", "Arcilla de bola", 
-  "Arcilla inglesa", "Bentonita", "Feldespato potásico", "Feldespato sódico", 
-  "Nefelina sienita", "Carbonato cálcico", "Dolomita", "Talco", "Wollastonita", 
+  "SÃƒÂ­lice", "CaolÃƒÂ­n EPK", "CaolÃƒÂ­n Grolleg", "CaolÃƒÂ­n calcinado", "Arcilla de bola", 
+  "Arcilla inglesa", "Bentonita", "Feldespato potÃƒÂ¡sico", "Feldespato sÃƒÂ³dico", 
+  "Nefelina sienita", "Carbonato cÃƒÂ¡lcico", "Dolomita", "Talco", "Wollastonita", 
   "Carbonato de magnesio", "Carbonato de bario", "Carbonato de estroncio", 
   "Carbonato de litio", "Espodumena", "Petalita", "Borato de calcio", "Colemanita", 
   "Ulexita", "Frita 3110", "Frita 3134", "Frita CQ003", "Frita 3195", "Frita 3124", 
-  "Frita 3249", "Frita 3269", "Óxido de zinc", "Alúmina hidratada", "Óxido de estaño", 
-  "Zircon", "Óxido de zirconio", "Dióxido de titanio", "Rutilo", "Ceniza de hueso", 
-  "Fosfato tricálcico", "Óxido de hierro", "Óxido rojo", "Óxido negro", "Óxido de cobre", 
-  "Carbonato de cobre", "Óxido de cobalto", "Carbonato de cobalto", "Óxido de manganeso", 
-  "Dióxido de manganeso", "Óxido de níquel", "Óxido de cromo", "Óxido de vanadio", 
-  "Ilmenita", "Carbonato de manganeso", "Carbonato de níquel", "Carbonato de hierro", 
+  "Frita 3249", "Frita 3269", "Ãƒâ€œxido de zinc", "AlÃƒÂºmina hidratada", "Ãƒâ€œxido de estaÃƒÂ±o", 
+  "Zircon", "Ãƒâ€œxido de zirconio", "DiÃƒÂ³xido de titanio", "Rutilo", "Ceniza de hueso", 
+  "Fosfato tricÃƒÂ¡lcico", "Ãƒâ€œxido de hierro", "Ãƒâ€œxido rojo", "Ãƒâ€œxido negro", "Ãƒâ€œxido de cobre", 
+  "Carbonato de cobre", "Ãƒâ€œxido de cobalto", "Carbonato de cobalto", "Ãƒâ€œxido de manganeso", 
+  "DiÃƒÂ³xido de manganeso", "Ãƒâ€œxido de nÃƒÂ­quel", "Ãƒâ€œxido de cromo", "Ãƒâ€œxido de vanadio", 
+  "Ilmenita", "Carbonato de manganeso", "Carbonato de nÃƒÂ­quel", "Carbonato de hierro", 
   "Nitrato de cobalto", "Nitrato de cobre", "Silicato de sodio", "Epsom (sulfato de magnesio)", 
-  "Chamota fina", "Arena silícea fina", "Chamota molida", "Chamota refractaria fina", 
-  "Ceniza vegetal tamizada", "Ceniza de madera", "Fluorita", "Bórax", "Ácido bórico", 
-  "Sulfato de bario", "Óxido de molibdeno", "Óxido de titanio anatasa", "Carburo de silicio"
+  "Chamota fina", "Arena silÃƒÂ­cea fina", "Chamota molida", "Chamota refractaria fina", 
+  "Ceniza vegetal tamizada", "Ceniza de madera", "Fluorita", "BÃƒÂ³rax", "ÃƒÂcido bÃƒÂ³rico", 
+  "Sulfato de bario", "Ãƒâ€œxido de molibdeno", "Ãƒâ€œxido de titanio anatasa", "Carburo de silicio"
 ];
 
 // Helper to remove accents for search
@@ -256,7 +256,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Por favor selecciona un archivo de imagen válido.');
+      alert('Por favor selecciona un archivo de imagen vÃƒÂ¡lido.');
       return;
     }
 
@@ -316,7 +316,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
       const data = {
         ...formData,
         authorId: auth.currentUser?.uid,
-        authorName: auth.currentUser?.displayName || 'Anónimo',
+        authorName: auth.currentUser?.displayName || 'AnÃƒÂ³nimo',
         updatedAt: serverTimestamp(),
         createdAt: formData.createdAt || serverTimestamp(),
       };
@@ -338,8 +338,8 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
     <form onSubmit={handleSubmit} className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-2xl font-semibold tracking-tight">{glazeId ? 'Editar Esmalte' : 'Nueva Ficha Técnica'}</h3>
-          <p className="text-sm text-[#636E72]">Completa los datos técnicos del laboratorio.</p>
+          <h3 className="text-2xl font-semibold tracking-tight">{glazeId ? 'Editar Esmalte' : 'Nueva Ficha TÃƒÂ©cnica'}</h3>
+          <p className="text-sm text-[#636E72]">Completa los datos tÃƒÂ©cnicos del laboratorio.</p>
         </div>
         <div className="flex gap-3">
           <button type="button" onClick={onCancel} className="rounded-xl border border-[#E4E4E2] px-6 py-2.5 text-sm font-medium hover:bg-white">
@@ -360,9 +360,9 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
         {/* Left Column: Info */}
         <div className="lg:col-span-2 space-y-8">
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-6">
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Nombre del Esmalte</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Nombre del Esmalte</label>
                 <input 
                   required
                   value={formData.name}
@@ -372,7 +372,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Código Generado</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">CÃƒÂ³digo Generado</label>
                 <div className="flex items-center gap-2">
                   <input 
                     readOnly
@@ -382,7 +382,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                   <div className="group relative">
                     <Info size={16} className="text-[#B2BEC3]" />
                     <div className="absolute bottom-full right-0 mb-2 hidden w-48 rounded-lg bg-[#2D3436] p-2 text-[10px] text-white group-hover:block">
-                      El código se genera automáticamente: COLOR-ACABADO-USO-NÚMERO-VARIANTE
+                      El cÃƒÂ³digo se genera automÃƒÂ¡ticamente: COLOR-ACABADO-USO-NÃƒÅ¡MERO-VARIANTE
                     </div>
                   </div>
                 </div>
@@ -391,7 +391,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
 
             <div className="grid grid-cols-1 gap-6 md:grid-cols-4">
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Color</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Color</label>
                 <select 
                   value={formData.color}
                   onChange={e => setFormData({ ...formData, color: e.target.value })}
@@ -401,7 +401,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Acabado</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Acabado</label>
                 <select 
                   value={formData.finish}
                   onChange={e => setFormData({ ...formData, finish: e.target.value })}
@@ -411,7 +411,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Uso</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Uso</label>
                 <select 
                   value={formData.usage?.[0] || ''}
                   onChange={e => setFormData({ ...formData, usage: [e.target.value] })}
@@ -421,7 +421,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Variante (Opcional)</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Variante (Opcional)</label>
                 <input 
                   value={variant}
                   onChange={e => setVariant(e.target.value.toUpperCase().slice(0, 1))}
@@ -432,9 +432,9 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-6">
               <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Textura</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Textura</label>
                 <select 
                   value={formData.texture}
                   onChange={e => setFormData({ ...formData, texture: e.target.value })}
@@ -443,20 +443,10 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                   {CATEGORIES.texture.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Familia Química</label>
-                <select 
-                  value={formData.chemicalFamily}
-                  onChange={e => setFormData({ ...formData, chemicalFamily: e.target.value })}
-                  className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-3 text-sm outline-none focus:border-[#2D3436] focus:bg-white"
-                >
-                  {CATEGORIES.family.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Observaciones</label>
+              <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Observaciones</label>
               <textarea 
                 value={formData.observations}
                 onChange={e => setFormData({ ...formData, observations: e.target.value })}
@@ -471,8 +461,8 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-8">
             <div className="flex items-center justify-between border-b border-[#F4F4F2] pb-6">
               <div>
-                <h4 className="text-lg font-semibold tracking-tight">Módulo de Receta</h4>
-                <p className="text-xs text-[#636E72]">Cálculo inteligente de base y adicionales.</p>
+                <h4 className="text-lg font-semibold tracking-tight">MÃƒÂ³dulo de Receta</h4>
+                <p className="text-xs text-[#636E72]">CÃƒÂ¡lculo inteligente de base y adicionales.</p>
               </div>
               <div className="flex items-center gap-2 rounded-xl bg-[#F4F4F2] p-1">
                 <button 
@@ -568,7 +558,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               </div>
               <div className="flex items-center gap-4">
                 <div className="flex-1 space-y-1">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Nuevo Peso Total Base</p>
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-[#7F8A93]">Nuevo Peso Total Base</p>
                   <div className="flex gap-2">
                     <input 
                       type="number"
@@ -606,7 +596,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
         <div className="space-y-8">
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Imagen Principal</h4>
+              <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Imagen Principal</h4>
               <label className="flex cursor-pointer items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#2D3436] hover:opacity-70 transition-all">
                 <Upload size={14} />
                 Subir Archivo
@@ -639,7 +629,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
 
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Galería de Fotos ({formData.gallery?.length || 0})</h4>
+              <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">GalerÃƒÂ­a de Fotos ({formData.gallery?.length || 0})</h4>
             </div>
             <div className="grid grid-cols-2 gap-3">
               {(formData.gallery || []).map((img, idx) => (
@@ -705,21 +695,21 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                   className="flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#E4E4E2] text-[#B2BEC3] transition-all hover:border-[#2D3436] hover:text-[#2D3436] hover:bg-[#F4F4F2]"
                 >
                   <Plus size={24} />
-                  <span className="text-[10px] font-bold uppercase tracking-widest mt-1">Añadir Hueco</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest mt-1">AÃƒÂ±adir Hueco</span>
                 </button>
               ) : (
                 <div className="flex aspect-square flex-col items-center justify-center rounded-2xl border border-[#E4E4E2] bg-[#F4F4F2] text-[#B2BEC3]">
-                  <span className="text-[10px] font-bold uppercase tracking-widest px-4 text-center">Límite de Galería Alcanzado</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest px-4 text-center">LÃƒÂ­mite de GalerÃƒÂ­a Alcanzado</span>
                 </div>
               )}
             </div>
             {(formData.gallery?.length || 0) >= 4 && (
-              <p className="text-[10px] text-amber-600 mt-2 font-medium">Nota: Guarda la ficha continuamente. Múltiples fotos consumen capacidad del documento gratis.</p>
+              <p className="text-[10px] text-amber-600 mt-2 font-medium">Nota: Guarda la ficha continuamente. MÃƒÂºltiples fotos consumen capacidad del documento gratis.</p>
             )}
           </div>
 
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
-            <h4 className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Estado de la Ficha</h4>
+            <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Estado de la Ficha</h4>
             <div className="space-y-3">
               {(['draft', 'pending', 'validated', 'published'] as GlazeStatus[]).map(s => (
                 <button
@@ -741,10 +731,10 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
           <div className="rounded-[24px] bg-[#2D3436] p-8 text-white shadow-sm space-y-4">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest opacity-60">
               <Info size={14} />
-              Consejo Técnico
+              Consejo TÃƒÂ©cnico
             </div>
             <p className="text-sm leading-relaxed opacity-90">
-              Recuerda que los adicionales no se suman al total base. El sistema los calcula de forma independiente para mantener la pureza de la fórmula.
+              Recuerda que los adicionales no se suman al total base. El sistema los calcula de forma independiente para mantener la pureza de la fÃƒÂ³rmula.
             </p>
           </div>
         </div>

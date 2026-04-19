@@ -288,7 +288,14 @@ export default function GlazeList({
               </div>
             )}
             
-            <div className="aspect-[4/3] overflow-hidden">
+            <div
+              onClick={() => {
+                if (!isSelectionMode) {
+                  onSelect(glaze.id!);
+                }
+              }}
+              className={cn("aspect-[4/3] overflow-hidden", !isSelectionMode && "cursor-pointer")}
+            >
               <img 
                 src={glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/400/300`} 
                 className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110" 

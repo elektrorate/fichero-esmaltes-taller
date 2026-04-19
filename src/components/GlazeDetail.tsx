@@ -168,8 +168,10 @@ export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
                   <p className="text-sm font-medium">{glaze.texture}</p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Familia</p>
-                  <p className="text-sm font-medium">{glaze.chemicalFamily}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Uso</p>
+                  <p className="text-sm font-medium">
+                    {glaze.usage && glaze.usage.length > 0 ? glaze.usage.join(', ') : 'No especificado'}
+                  </p>
                 </div>
               </div>
             </div>
