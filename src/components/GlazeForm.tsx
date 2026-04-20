@@ -19,7 +19,7 @@ const CATEGORIES = {
     { label: 'Mate', code: 'MT' },
     { label: 'Satinado', code: 'ST' },
     { label: 'Opaco', code: 'OP' },
-    { label: 'TranslÃƒÂºcido', code: 'TR' },
+    { label: 'Translúcido', code: 'TR' },
     { label: 'Cristalino', code: 'CR' },
     { label: 'Moteado', code: 'SP' },
     { label: 'Texturizado', code: 'TX' },
@@ -32,10 +32,10 @@ const CATEGORIES = {
     { label: 'Azul', code: 'A' },
     { label: 'Verde', code: 'V' },
     { label: 'Rojo', code: 'R' },
-    { label: 'MarrÃƒÂ³n', code: 'M' },
+    { label: 'Marrón', code: 'M' },
     { label: 'Amarillo', code: 'Y' },
     { label: 'Naranja', code: 'O' },
-    { label: 'PÃƒÂºrpura', code: 'P' },
+    { label: 'Púrpura', code: 'P' },
     { label: 'Tierra / terracota', code: 'T' },
     { label: 'Crema / beige', code: 'C' },
     { label: 'Transparente', code: 'TR' }
@@ -44,28 +44,28 @@ const CATEGORIES = {
     { label: 'Apto para vajilla / food safe', code: 'FS' },
     { label: 'Decorativo', code: 'DC' }
   ],
-  texture: ['Liso', 'Sedoso', 'Rugoso', 'Arenoso', 'Moteado', 'Craquelado', 'Lava / volcÃƒÂ¡nico', 'Piel de naranja', 'Escurrido controlado'],
-  application: ['InmersiÃƒÂ³n', 'Vertido', 'Pincel', 'AerÃƒÂ³grafo', 'Pulverizado', 'Capa ÃƒÂºnica', 'Multicapa'],
-  family: ['Borosilicato', 'FeldespÃƒÂ¡tico', 'Litio', 'Zinc', 'Magnesio', 'Cenizas', 'Alta alÃƒÂºmina', 'Baja expansiÃƒÂ³n']
+  texture: ['Liso', 'Sedoso', 'Rugoso', 'Arenoso', 'Moteado', 'Craquelado', 'Lava / volcánico', 'Piel de naranja', 'Escurrido controlado'],
+  application: ['Inmersión', 'Vertido', 'Pincel', 'Aerógrafo', 'Pulverizado', 'Capa única', 'Multicapa'],
+  family: ['Borosilicato', 'Feldespático', 'Litio', 'Zinc', 'Magnesio', 'Cenizas', 'Alta alúmina', 'Baja expansión']
 };
 
 const RAW_MATERIALS = [
-  "SÃƒÂ­lice", "CaolÃƒÂ­n EPK", "CaolÃƒÂ­n Grolleg", "CaolÃƒÂ­n calcinado", "Arcilla de bola", 
-  "Arcilla inglesa", "Bentonita", "Feldespato potÃƒÂ¡sico", "Feldespato sÃƒÂ³dico", 
-  "Nefelina sienita", "Carbonato cÃƒÂ¡lcico", "Dolomita", "Talco", "Wollastonita", 
-  "Carbonato de magnesio", "Carbonato de bario", "Carbonato de estroncio", 
-  "Carbonato de litio", "Espodumena", "Petalita", "Borato de calcio", "Colemanita", 
-  "Ulexita", "Frita 3110", "Frita 3134", "Frita CQ003", "Frita 3195", "Frita 3124", 
-  "Frita 3249", "Frita 3269", "Ãƒâ€œxido de zinc", "AlÃƒÂºmina hidratada", "Ãƒâ€œxido de estaÃƒÂ±o", 
-  "Zircon", "Ãƒâ€œxido de zirconio", "DiÃƒÂ³xido de titanio", "Rutilo", "Ceniza de hueso", 
-  "Fosfato tricÃƒÂ¡lcico", "Ãƒâ€œxido de hierro", "Ãƒâ€œxido rojo", "Ãƒâ€œxido negro", "Ãƒâ€œxido de cobre", 
-  "Carbonato de cobre", "Ãƒâ€œxido de cobalto", "Carbonato de cobalto", "Ãƒâ€œxido de manganeso", 
-  "DiÃƒÂ³xido de manganeso", "Ãƒâ€œxido de nÃƒÂ­quel", "Ãƒâ€œxido de cromo", "Ãƒâ€œxido de vanadio", 
-  "Ilmenita", "Carbonato de manganeso", "Carbonato de nÃƒÂ­quel", "Carbonato de hierro", 
-  "Nitrato de cobalto", "Nitrato de cobre", "Silicato de sodio", "Epsom (sulfato de magnesio)", 
-  "Chamota fina", "Arena silÃƒÂ­cea fina", "Chamota molida", "Chamota refractaria fina", 
-  "Ceniza vegetal tamizada", "Ceniza de madera", "Fluorita", "BÃƒÂ³rax", "ÃƒÂcido bÃƒÂ³rico", 
-  "Sulfato de bario", "Ãƒâ€œxido de molibdeno", "Ãƒâ€œxido de titanio anatasa", "Carburo de silicio"
+  'Sílice', 'Caolín EPK', 'Caolín Grolleg', 'Caolín calcinado', 'Arcilla de bola',
+  'Arcilla inglesa', 'Bentonita', 'Feldespato potásico', 'Feldespato sódico',
+  'Nefelina sienita', 'Carbonato cálcico', 'Dolomita', 'Talco', 'Wollastonita',
+  'Carbonato de magnesio', 'Carbonato de bario', 'Carbonato de estroncio',
+  'Carbonato de litio', 'Espodumena', 'Petalita', 'Borato de calcio', 'Colemanita',
+  'Ulexita', 'Frita 3110', 'Frita 3134', 'Frita CQ003', 'Frita 3195', 'Frita 3124',
+  'Frita 3249', 'Frita 3269', 'Óxido de zinc', 'Alúmina hidratada', 'Óxido de estaño',
+  'Zircon', 'Óxido de zirconio', 'Dióxido de titanio', 'Rutilo', 'Ceniza de hueso',
+  'Fosfato tricálcico', 'Óxido de hierro', 'Óxido rojo', 'Óxido negro', 'Óxido de cobre',
+  'Carbonato de cobre', 'Óxido de cobalto', 'Carbonato de cobalto', 'Óxido de manganeso',
+  'Dióxido de manganeso', 'Óxido de níquel', 'Óxido de cromo', 'Óxido de vanadio',
+  'Ilmenita', 'Carbonato de manganeso', 'Carbonato de níquel', 'Carbonato de hierro',
+  'Nitrato de cobalto', 'Nitrato de cobre', 'Silicato de sodio', 'Epsom (sulfato de magnesio)',
+  'Chamota fina', 'Arena silícea fina', 'Chamota molida', 'Chamota refractaria fina',
+  'Ceniza vegetal tamizada', 'Ceniza de madera', 'Fluorita', 'Bórax', 'Ácido bórico',
+  'Sulfato de bario', 'Óxido de molibdeno', 'Óxido de titanio anatasa', 'Carburo de silicio'
 ];
 
 // Helper to remove accents for search
@@ -213,24 +213,29 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
     }
   }, [glazeId]);
 
+  const syncRecipeTotals = (recipe: NonNullable<typeof formData.recipe>) => {
+    recipe.totalBase = recipe.base.reduce((acc, item) => acc + (Number(item.amount) || 0), 0);
+    return recipe;
+  };
+
   const handleRecipeChange = (type: 'base' | 'additional', index: number, field: keyof RecipeItem, value: string | number) => {
     const newRecipe = { ...formData.recipe! };
     const items = [...newRecipe[type]];
-    items[index] = { ...items[index], [field]: value };
+    items[index] = { ...items[index], [field]: value } as RecipeItem;
     newRecipe[type] = items;
-    setFormData({ ...formData, recipe: newRecipe });
+    setFormData({ ...formData, recipe: syncRecipeTotals(newRecipe) });
   };
 
   const addRecipeRow = (type: 'base' | 'additional') => {
     const newRecipe = { ...formData.recipe! };
     newRecipe[type] = [...newRecipe[type], { material: '', amount: 0 }];
-    setFormData({ ...formData, recipe: newRecipe });
+    setFormData({ ...formData, recipe: syncRecipeTotals(newRecipe) });
   };
 
   const removeRecipeRow = (type: 'base' | 'additional', index: number) => {
     const newRecipe = { ...formData.recipe! };
     newRecipe[type] = newRecipe[type].filter((_, i) => i !== index);
-    setFormData({ ...formData, recipe: newRecipe });
+    setFormData({ ...formData, recipe: syncRecipeTotals(newRecipe) });
   };
 
   const calculateTotals = () => {
@@ -251,12 +256,14 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
     setFormData({ ...formData, recipe: newRecipe });
   };
 
+  const getAmountInputValue = (amount: number) => (amount === 0 ? '' : amount);
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, targetIdx?: number) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Por favor selecciona un archivo de imagen vÃƒÂ¡lido.');
+      alert('Por favor selecciona un archivo de imagen válido.');
       return;
     }
 
@@ -313,10 +320,19 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
     e.preventDefault();
     setLoading(true);
     try {
+      const recipe = formData.recipe
+        ? syncRecipeTotals({
+            ...formData.recipe,
+            base: [...formData.recipe.base],
+            additional: [...formData.recipe.additional],
+          })
+        : formData.recipe;
+
       const data = {
         ...formData,
+        recipe,
         authorId: auth.currentUser?.uid,
-        authorName: auth.currentUser?.displayName || 'AnÃƒÂ³nimo',
+        authorName: auth.currentUser?.displayName || 'Anónimo',
         updatedAt: serverTimestamp(),
         createdAt: formData.createdAt || serverTimestamp(),
       };
@@ -338,8 +354,8 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
     <form onSubmit={handleSubmit} className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-2xl font-semibold tracking-tight">{glazeId ? 'Editar Esmalte' : 'Nueva Ficha TÃƒÂ©cnica'}</h3>
-          <p className="text-sm text-[#636E72]">Completa los datos tÃƒÂ©cnicos del laboratorio.</p>
+          <h3 className="text-2xl font-semibold tracking-tight">{glazeId ? 'Editar Esmalte' : 'Nueva Ficha Técnica'}</h3>
+          <p className="text-sm text-[#636E72]">Completa los datos técnicos del laboratorio.</p>
         </div>
         <div className="flex gap-3">
           <button type="button" onClick={onCancel} className="rounded-xl border border-[#E4E4E2] px-6 py-2.5 text-sm font-medium hover:bg-white">
@@ -372,7 +388,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">CÃƒÂ³digo Generado</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Código Generado</label>
                 <div className="flex items-center gap-2">
                   <input 
                     readOnly
@@ -382,7 +398,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                   <div className="group relative">
                     <Info size={16} className="text-[#B2BEC3]" />
                     <div className="absolute bottom-full right-0 mb-2 hidden w-48 rounded-lg bg-[#2D3436] p-2 text-[10px] text-white group-hover:block">
-                      El cÃƒÂ³digo se genera automÃƒÂ¡ticamente: COLOR-ACABADO-USO-NÃƒÅ¡MERO-VARIANTE
+                      El código se genera automáticamente: COLOR-ACABADO-USO-NÚMERO-VARIANTE
                     </div>
                   </div>
                 </div>
@@ -459,23 +475,23 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
 
           {/* Recipe Module */}
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-8">
-            <div className="flex items-center justify-between border-b border-[#F4F4F2] pb-6">
+            <div className="flex flex-col gap-4 border-b border-[#F4F4F2] pb-6 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h4 className="text-lg font-semibold tracking-tight">MÃƒÂ³dulo de Receta</h4>
-                <p className="text-xs text-[#636E72]">CÃƒÂ¡lculo inteligente de base y adicionales.</p>
+                <h4 className="text-lg font-semibold tracking-tight">Módulo de Receta</h4>
+                <p className="text-xs text-[#636E72]">Cálculo inteligente de base y adicionales.</p>
               </div>
-              <div className="flex items-center gap-2 rounded-xl bg-[#F4F4F2] p-1">
+              <div className="flex w-full items-center gap-2 rounded-xl bg-[#F4F4F2] p-1 sm:w-auto">
                 <button 
                   type="button"
                   onClick={() => setCalcMode('percent')}
-                  className={cn("rounded-lg px-4 py-1.5 text-xs font-medium transition-all", calcMode === 'percent' ? "bg-white text-[#2D3436] shadow-sm" : "text-[#636E72]")}
+                  className={cn("flex-1 rounded-lg px-4 py-1.5 text-xs font-medium transition-all sm:flex-none", calcMode === 'percent' ? "bg-white text-[#2D3436] shadow-sm" : "text-[#636E72]")}
                 >
                   Porcentaje (%)
                 </button>
                 <button 
                   type="button"
                   onClick={() => setCalcMode('grams')}
-                  className={cn("rounded-lg px-4 py-1.5 text-xs font-medium transition-all", calcMode === 'grams' ? "bg-white text-[#2D3436] shadow-sm" : "text-[#636E72]")}
+                  className={cn("flex-1 rounded-lg px-4 py-1.5 text-xs font-medium transition-all sm:flex-none", calcMode === 'grams' ? "bg-white text-[#2D3436] shadow-sm" : "text-[#636E72]")}
                 >
                   Gramos (g)
                 </button>
@@ -489,7 +505,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               </div>
               <div className="space-y-2">
                 {formData.recipe?.base.map((item, idx) => (
-                  <div key={idx} className="flex gap-3">
+                  <div key={idx} className="flex flex-col gap-3 sm:flex-row">
                     <AutocompleteInput 
                       value={item.material}
                       onChange={val => handleRecipeChange('base', idx, 'material', val)}
@@ -497,21 +513,24 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                       inputClassName="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
                       placeholder="Materia prima"
                     />
-                    <input 
-                      type="number"
-                      step="0.1"
-                      value={item.amount}
-                      onChange={e => handleRecipeChange('base', idx, 'amount', parseFloat(e.target.value) || 0)}
-                      className="w-24 rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
-                      placeholder="0.0"
-                    />
-                    <button type="button" onClick={() => removeRecipeRow('base', idx)} className="text-[#B2BEC3] hover:text-red-500"><Trash2 size={16} /></button>
+                    <div className="flex items-center gap-3 sm:w-auto">
+                      <input 
+                        type="number"
+                        inputMode="decimal"
+                        step="0.1"
+                        value={getAmountInputValue(item.amount)}
+                        onChange={e => handleRecipeChange('base', idx, 'amount', e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                        className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white sm:w-24" 
+                        placeholder="0.0"
+                      />
+                      <button type="button" onClick={() => removeRecipeRow('base', idx)} className="text-[#B2BEC3] hover:text-red-500"><Trash2 size={16} /></button>
+                    </div>
                   </div>
                 ))}
               </div>
-              <div className="flex items-center justify-between rounded-xl bg-[#F7F7F5] p-4">
+              <div className="flex flex-col gap-2 rounded-xl bg-[#F7F7F5] p-4 sm:flex-row sm:items-center sm:justify-between">
                 <span className="text-sm font-semibold">Total Base</span>
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-4">
                   {baseTotal !== 100 && calcMode === 'percent' && (
                     <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 uppercase">
                       <AlertCircle size={12} /> No suma 100%
@@ -529,7 +548,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               </div>
               <div className="space-y-2">
                 {formData.recipe?.additional.map((item, idx) => (
-                  <div key={idx} className="flex gap-3">
+                  <div key={idx} className="flex flex-col gap-3 sm:flex-row">
                     <AutocompleteInput 
                       value={item.material}
                       onChange={val => handleRecipeChange('additional', idx, 'material', val)}
@@ -537,15 +556,18 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                       inputClassName="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
                       placeholder="Materia prima"
                     />
-                    <input 
-                      type="number"
-                      step="0.1"
-                      value={item.amount}
-                      onChange={e => handleRecipeChange('additional', idx, 'amount', parseFloat(e.target.value) || 0)}
-                      className="w-24 rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
-                      placeholder="0.0"
-                    />
-                    <button type="button" onClick={() => removeRecipeRow('additional', idx)} className="text-[#B2BEC3] hover:text-red-500"><Trash2 size={16} /></button>
+                    <div className="flex items-center gap-3 sm:w-auto">
+                      <input 
+                        type="number"
+                        inputMode="decimal"
+                        step="0.1"
+                        value={getAmountInputValue(item.amount)}
+                        onChange={e => handleRecipeChange('additional', idx, 'amount', e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                        className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white sm:w-24" 
+                        placeholder="0.0"
+                      />
+                      <button type="button" onClick={() => removeRecipeRow('additional', idx)} className="text-[#B2BEC3] hover:text-red-500"><Trash2 size={16} /></button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -556,12 +578,13 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 <Calculator size={18} />
                 Reescalado Proporcional
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
                 <div className="flex-1 space-y-1">
                   <p className="text-[11px] font-bold uppercase tracking-widest text-[#7F8A93]">Nuevo Peso Total Base</p>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     <input 
                       type="number"
+                      inputMode="decimal"
                       value={targetWeight}
                       onChange={e => setTargetWeight(parseFloat(e.target.value) || 0)}
                       className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
@@ -569,13 +592,13 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                     <button 
                       type="button"
                       onClick={handleRescale}
-                      className="rounded-xl bg-[#2D3436] px-4 py-2 text-xs font-bold text-white hover:bg-black"
+                      className="rounded-xl bg-[#2D3436] px-4 py-2 text-xs font-bold text-white hover:bg-black sm:min-w-[96px]"
                     >
                       Ajustar
                     </button>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2 pt-5">
+                <div className="flex flex-wrap gap-2 sm:pt-5">
                   {[100, 500, 1000, 2000].map(w => (
                     <button 
                       key={w} 
@@ -629,7 +652,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
 
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
             <div className="flex items-center justify-between">
-              <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">GalerÃƒÂ­a de Fotos ({formData.gallery?.length || 0})</h4>
+              <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Galería de Fotos ({formData.gallery?.length || 0})</h4>
             </div>
             <div className="grid grid-cols-2 gap-3">
               {(formData.gallery || []).map((img, idx) => (
@@ -695,16 +718,16 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                   className="flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#E4E4E2] text-[#B2BEC3] transition-all hover:border-[#2D3436] hover:text-[#2D3436] hover:bg-[#F4F4F2]"
                 >
                   <Plus size={24} />
-                  <span className="text-[10px] font-bold uppercase tracking-widest mt-1">AÃƒÂ±adir Hueco</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest mt-1">Añadir Hueco</span>
                 </button>
               ) : (
                 <div className="flex aspect-square flex-col items-center justify-center rounded-2xl border border-[#E4E4E2] bg-[#F4F4F2] text-[#B2BEC3]">
-                  <span className="text-[10px] font-bold uppercase tracking-widest px-4 text-center">LÃƒÂ­mite de GalerÃƒÂ­a Alcanzado</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest px-4 text-center">Límite de Galería Alcanzado</span>
                 </div>
               )}
             </div>
             {(formData.gallery?.length || 0) >= 4 && (
-              <p className="text-[10px] text-amber-600 mt-2 font-medium">Nota: Guarda la ficha continuamente. MÃƒÂºltiples fotos consumen capacidad del documento gratis.</p>
+              <p className="text-[10px] text-amber-600 mt-2 font-medium">Nota: Guarda la ficha continuamente. Múltiples fotos consumen capacidad del documento gratis.</p>
             )}
           </div>
 
@@ -731,10 +754,10 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
           <div className="rounded-[24px] bg-[#2D3436] p-8 text-white shadow-sm space-y-4">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest opacity-60">
               <Info size={14} />
-              Consejo TÃƒÂ©cnico
+              Consejo Técnico
             </div>
             <p className="text-sm leading-relaxed opacity-90">
-              Recuerda que los adicionales no se suman al total base. El sistema los calcula de forma independiente para mantener la pureza de la fÃƒÂ³rmula.
+              Recuerda que los adicionales no se suman al total base. El sistema los calcula de forma independiente para mantener la pureza de la fórmula.
             </p>
           </div>
         </div>
