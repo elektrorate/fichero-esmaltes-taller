@@ -117,10 +117,10 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-[auto_1fr]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(360px,580px)_1fr]">
         {/* Left Column: Photo */}
         <div className="space-y-6">
-          <div className="overflow-hidden rounded-[32px] bg-white shadow-sm max-w-[70%]">
+          <div className="w-full overflow-hidden rounded-[32px] bg-white shadow-sm">
             <img 
               src={activeImage || glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/800/600`} 
               className="w-full aspect-[8/10] object-cover transition-all duration-300" 
@@ -162,14 +162,14 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
               </span>
             </div>
 
-            <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-              <div className="space-y-1">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Acabado</p>
-                <p className="text-sm font-medium">{glaze.finish}</p>
-              </div>
+            <div className="mt-7 grid grid-cols-2 gap-x-8 gap-y-5 border-t-2 border-[#8a168a]/30 pt-6 md:grid-cols-4">
               <div className="space-y-1">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Color</p>
                 <p className="text-sm font-medium">{glaze.color}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Acabado</p>
+                <p className="text-sm font-medium">{glaze.finish}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Textura</p>
@@ -183,7 +183,7 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
               </div>
             </div>
 
-            <div className="mt-6 border-t border-[#F4F4F2] pt-6 grid grid-cols-3 gap-4">
+            <div className="mt-7 border-t-2 border-[#8a168a]/30 pt-6 grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-4">
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
                   <Thermometer size={12} className="text-[#8a168a]" />
@@ -207,22 +207,24 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
               </div>
             </div>
 
-            <div className="mt-6 border-t border-[#F4F4F2] pt-6 grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5">
-                  <User size={12} className="text-[#8a168a]" />
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Autor</p>
+            <div className="mt-7 border-t-2 border-[#8a168a]/30 pt-6">
+              <div className="space-y-5">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <User size={12} className="text-[#8a168a]" />
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Autor</p>
+                  </div>
+                  <p className="text-sm font-medium">{glaze.authorName}</p>
                 </div>
-                <p className="text-sm font-medium">{glaze.authorName}</p>
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5">
-                  <Calendar size={12} className="text-[#8a168a]" />
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Creado</p>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <Calendar size={12} className="text-[#8a168a]" />
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Creado</p>
+                  </div>
+                  <p className="text-sm font-medium">
+                    {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
+                  </p>
                 </div>
-                <p className="text-sm font-medium">
-                  {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
-                </p>
               </div>
             </div>
           </div>

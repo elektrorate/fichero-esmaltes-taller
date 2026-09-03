@@ -324,6 +324,15 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
         } else {
           // Gallery update or add
           const newGallery = [...(formData.gallery || [])];
+          if (!formData.mainImage && targetIdx === -1) {
+            setFormData({ ...formData, mainImage: base64String });
+            return;
+          }
+          if (!formData.mainImage && targetIdx >= 0) {
+            newGallery.splice(targetIdx, 1);
+            setFormData({ ...formData, mainImage: base64String, gallery: newGallery });
+            return;
+          }
           if (targetIdx === -1) {
             newGallery.push(base64String);
           } else {
@@ -791,14 +800,16 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
                   <div className="flex items-center justify-center gap-1 p-1.5 bg-[#F4F4F2]">
                     <button
                       type="button"
+                      disabled={!img}
                       onClick={() => {
+                        if (!img) return;
                         const newGallery = [...(formData.gallery || [])];
-                        newGallery.splice(idx, 1);
+                        newGallery[idx] = formData.mainImage || '';
                         const oldMain = formData.mainImage;
-                        if (oldMain) newGallery.push(oldMain);
-                        setFormData({ ...formData, mainImage: img, gallery: newGallery });
+                        const cleanGallery = newGallery.filter(Boolean);
+                        setFormData({ ...formData, mainImage: img, gallery: oldMain ? cleanGallery : cleanGallery.filter((photo) => photo !== img) });
                       }}
-                      className="rounded-lg bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-[#2D3436] border border-[#E4E4E2] hover:bg-[#2D3436] hover:text-white transition-all"
+                      className="rounded-lg bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-[#2D3436] border border-[#E4E4E2] transition-all hover:bg-[#2D3436] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white disabled:hover:text-[#2D3436]"
                     >
                       Principal
                     </button>
