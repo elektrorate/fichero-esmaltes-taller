@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db, auth } from '../lib/firebase';
 import { doc, onSnapshot, collection, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
-import { Glaze, Comment } from '../types';
+import { Glaze, Comment, UserProfile } from '../types';
 import { STATUS_LABELS } from '../constants';
 import { generateGlazePDF } from '../lib/pdfUtils';
 import { motion } from 'motion/react';
@@ -10,11 +10,12 @@ import { cn } from '../lib/utils';
 
 interface GlazeDetailProps {
   id: string;
+  profile?: UserProfile | null;
   onEdit: () => void;
   onBack: () => void;
 }
 
-export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
+export default function GlazeDetail({ id, profile = null, onEdit, onBack }: GlazeDetailProps) {
   const [glaze, setGlaze] = useState<Glaze | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
@@ -81,27 +82,31 @@ export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
           Volver al repositorio
         </button>
         <div className="flex gap-3">
-          <button 
-            onClick={handleExportPDF}
-            disabled={isExporting}
-            className="flex items-center gap-2 rounded-xl border border-[#E4E4E2] px-4 py-2 text-sm font-medium text-[#636E72] hover:bg-white disabled:opacity-70"
-            title="Exportar PDF"
-          >
-            {isExporting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Descargando...
-              </>
-            ) : (
-              <>
-                <Download size={18} />
-                PDF
-              </>
-            )}
-          </button>
-          <button className="rounded-xl border border-[#E4E4E2] p-2.5 text-[#636E72] hover:bg-white">
-            <Printer size={18} />
-          </button>
+          {profile?.role === 'admin' && (
+            <button 
+              onClick={handleExportPDF}
+              disabled={isExporting}
+              className="flex items-center gap-2 rounded-xl border border-[#E4E4E2] px-4 py-2 text-sm font-medium text-[#636E72] hover:bg-white disabled:opacity-70"
+              title="Exportar PDF"
+            >
+              {isExporting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Descargando...
+                </>
+              ) : (
+                <>
+                  <Download size={18} />
+                  PDF
+                </>
+              )}
+            </button>
+          )}
+          {profile?.role === 'admin' && (
+            <button className="rounded-xl border border-[#E4E4E2] p-2.5 text-[#636E72] hover:bg-white">
+              <Printer size={18} />
+            </button>
+          )}
           <button className="rounded-xl border border-[#E4E4E2] p-2.5 text-[#636E72] hover:bg-white">
             <Share2 size={18} />
           </button>
@@ -112,25 +117,24 @@ export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-        {/* Left Column: Visuals & Info */}
-        <div className="lg:col-span-2 space-y-8">
-          <div className="overflow-hidden rounded-[32px] bg-white shadow-sm">
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-[auto_1fr]">
+        {/* Left Column: Photo */}
+        <div className="space-y-6">
+          <div className="overflow-hidden rounded-[32px] bg-white shadow-sm max-w-[70%]">
             <img 
               src={activeImage || glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/800/600`} 
-              className="aspect-[16/9] w-full object-cover transition-all duration-300" 
+              className="w-full aspect-[8/10] object-cover transition-all duration-300" 
               alt={glaze.name} 
               referrerPolicy="no-referrer"
             />
-            
             {((glaze.mainImage ? 1 : 0) + (glaze.gallery?.length || 0)) > 1 && (
-              <div className="flex gap-3 overflow-x-auto border-b border-[#F4F4F2] p-6">
+              <div className="flex gap-3 overflow-x-auto border-t border-[#F4F4F2] p-4">
                 {[glaze.mainImage, ...(glaze.gallery || [])].filter(Boolean).map((img, idx) => (
                   <button 
                     key={idx}
                     onClick={() => setActiveImage(img as string)}
                     className={cn(
-                      "h-20 w-20 shrink-0 overflow-hidden rounded-xl border-2 transition-all",
+                      "h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 transition-all",
                       (activeImage || glaze.mainImage) === img ? "border-[#2D3436] opacity-100" : "border-transparent opacity-60 hover:opacity-100"
                     )}
                   >
@@ -139,158 +143,86 @@ export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
                 ))}
               </div>
             )}
-
-            <div className="p-8">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h1 className="text-3xl font-semibold tracking-tight">{glaze.name}</h1>
-                  <p className="mt-1 text-sm font-bold uppercase tracking-[0.2em] text-[#B2BEC3]">{glaze.code}</p>
-                </div>
-                <span className={`rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-widest ${
-                  glaze.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 
-                  glaze.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700'
-                }`}>
-                  {STATUS_LABELS[glaze.status]}
-                </span>
-              </div>
-
-              <div className="mt-8 grid grid-cols-2 gap-6 md:grid-cols-4">
-                <div className="space-y-1">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Acabado</p>
-                  <p className="text-sm font-medium">{glaze.finish}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Color</p>
-                  <p className="text-sm font-medium">{glaze.color}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Textura</p>
-                  <p className="text-sm font-medium">{glaze.texture}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Uso</p>
-                  <p className="text-sm font-medium">
-                    {glaze.usage && glaze.usage.length > 0 ? glaze.usage.join(', ') : 'No especificado'}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Recipe Table */}
-          <div className="rounded-[32px] bg-white p-8 shadow-sm">
-            <div className="flex items-center justify-between border-b border-[#F4F4F2] pb-6">
-              <h3 className="text-lg font-semibold tracking-tight">Fórmula Técnica</h3>
-              <div className="flex gap-4 text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">
-                <span>Base: {glaze.recipe.totalBase}g</span>
-              </div>
-            </div>
-
-            <div className="mt-8 grid grid-cols-1 gap-12 md:grid-cols-2">
-              <div className="space-y-6">
-                <h4 className="text-xs font-bold uppercase tracking-widest text-[#2D3436]">Composición Base</h4>
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#F4F4F2] text-left text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">
-                      <th className="pb-3">Material</th>
-                      <th className="pb-3 text-right">Cantidad</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#F4F4F2]">
-                    {glaze.recipe.base.map((item, i) => (
-                      <tr key={i}>
-                        <td className="py-3 font-medium">{item.material}</td>
-                        <td className="py-3 text-right font-mono">{item.amount.toFixed(1)}</td>
-                      </tr>
-                    ))}
-                    <tr className="bg-[#F7F7F5]/50">
-                      <td className="py-3 font-bold">Total Base</td>
-                      <td className="py-3 text-right font-bold font-mono">
-                        {glaze.recipe.base.reduce((acc, i) => acc + i.amount, 0).toFixed(1)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="space-y-6">
-                <h4 className="text-xs font-bold uppercase tracking-widest text-[#2D3436]">Adicionales</h4>
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#F4F4F2] text-left text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">
-                      <th className="pb-3">Material</th>
-                      <th className="pb-3 text-right">Cantidad</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#F4F4F2]">
-                    {glaze.recipe.additional.map((item, i) => (
-                      <tr key={i}>
-                        <td className="py-3 font-medium">{item.material}</td>
-                        <td className="py-3 text-right font-mono">{item.amount.toFixed(1)}</td>
-                      </tr>
-                    ))}
-                    {glaze.recipe.additional.length === 0 && (
-                      <tr><td colSpan={2} className="py-4 text-center text-xs text-[#B2BEC3]">Sin adicionales</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          {/* Observations */}
-          <div className="rounded-[32px] bg-white p-8 shadow-sm">
-            <h3 className="text-lg font-semibold tracking-tight">Observaciones de Laboratorio</h3>
-            <div className="mt-6 text-sm leading-relaxed text-[#636E72] whitespace-pre-wrap">
-              {glaze.observations || "Sin observaciones adicionales registradas."}
-            </div>
           </div>
         </div>
 
-        {/* Right Column: Metadata & Comments */}
-        <div className="space-y-8">
-          <div className="rounded-[32px] bg-white p-8 shadow-sm space-y-6">
-            <h4 className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3]">Detalles de Cocción</h4>
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-[#F4F4F2] p-2 text-[#2D3436]"><Thermometer size={16} /></div>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Temperatura</p>
-                  <p className="text-sm font-medium">{glaze.temperature || 'No especificada'}</p>
-                </div>
+        {/* Right Column: Name, Tech Data, Firing Details, Comments */}
+        <div className="space-y-6">
+          <div className="rounded-[32px] bg-white p-8 shadow-sm">
+            <div className="flex items-start justify-between">
+              <div>
+                <h1 className="text-3xl font-semibold tracking-tight">{glaze.name}</h1>
+                <p className="mt-1 text-sm font-bold uppercase tracking-[0.2em] text-[#8a168a]">{glaze.code}</p>
               </div>
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-[#F4F4F2] p-2 text-[#2D3436]"><FlaskConical size={16} /></div>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Atmósfera</p>
-                  <p className="text-sm font-medium">{glaze.atmosphere || 'Oxidación'}</p>
-                </div>
+              <span className={`rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-widest ${
+                glaze.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 
+                glaze.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700'
+              }`}>
+                {STATUS_LABELS[glaze.status]}
+              </span>
+            </div>
+
+            <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Acabado</p>
+                <p className="text-sm font-medium">{glaze.finish}</p>
               </div>
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-[#F4F4F2] p-2 text-[#2D3436]"><Tag size={16} /></div>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Pasta</p>
-                  <p className="text-sm font-medium">{glaze.clayBody || 'Gres / Porcelana'}</p>
-                </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Color</p>
+                <p className="text-sm font-medium">{glaze.color}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Textura</p>
+                <p className="text-sm font-medium">{glaze.texture}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Uso</p>
+                <p className="text-sm font-medium">
+                  {glaze.usage && glaze.usage.length > 0 ? glaze.usage.join(', ') : 'No especificado'}
+                </p>
               </div>
             </div>
 
-            <div className="border-t border-[#F4F4F2] pt-6 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-full bg-[#E4E4E2]" />
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Autor</p>
-                  <p className="text-sm font-medium">{glaze.authorName}</p>
+            <div className="mt-6 border-t border-[#F4F4F2] pt-6 grid grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Thermometer size={12} className="text-[#8a168a]" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Temperatura</p>
                 </div>
+                <p className="text-sm font-medium">{glaze.temperature || 'No especificada'}</p>
               </div>
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-[#F4F4F2] p-2 text-[#2D3436]"><Calendar size={16} /></div>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Creado</p>
-                  <p className="text-sm font-medium">
-                    {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
-                  </p>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <FlaskConical size={12} className="text-[#8a168a]" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Atmósfera</p>
                 </div>
+                <p className="text-sm font-medium">{glaze.atmosphere || 'Oxidación'}</p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Tag size={12} className="text-[#8a168a]" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Pasta</p>
+                </div>
+                <p className="text-sm font-medium">{glaze.clayBody || 'Gres / Porcelana'}</p>
+              </div>
+            </div>
+
+            <div className="mt-6 border-t border-[#F4F4F2] pt-6 grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <User size={12} className="text-[#8a168a]" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Autor</p>
+                </div>
+                <p className="text-sm font-medium">{glaze.authorName}</p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Calendar size={12} className="text-[#8a168a]" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Creado</p>
+                </div>
+                <p className="text-sm font-medium">
+                  {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
+                </p>
               </div>
             </div>
           </div>
@@ -307,7 +239,7 @@ export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
                 <div key={comment.id} className="space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold text-[#2D3436]">{comment.authorName}</span>
-                    <span className="text-[9px] text-[#B2BEC3]">
+                    <span className="text-[9px] text-[#8a168a]">
                       {comment.createdAt?.toDate ? comment.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Ahora'}
                     </span>
                   </div>
@@ -315,7 +247,7 @@ export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
                 </div>
               ))}
               {comments.length === 0 && (
-                <p className="py-4 text-center text-xs text-[#B2BEC3]">No hay comentarios aún.</p>
+                <p className="py-4 text-center text-xs text-[#8a168a]">No hay comentarios aún.</p>
               )}
             </div>
 
@@ -332,6 +264,78 @@ export default function GlazeDetail({ id, onEdit, onBack }: GlazeDetailProps) {
             </form>
           </div>
         </div>
+      </div>
+
+      {/* Recipe & Observations - Side by Side */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {/* Recipe Table */}
+      <div className="rounded-[32px] bg-white p-8 shadow-sm">
+        <div className="flex items-center justify-between border-b border-[#D5D0CC] pb-6">
+          <h3 className="text-lg font-semibold tracking-tight">Fórmula Técnica</h3>
+          <div className="flex gap-4 text-xs font-bold uppercase tracking-widest text-[#8a168a]">
+            <span>Base: {glaze.recipe.totalBase}g</span>
+          </div>
+        </div>
+
+        <div className="mt-8 space-y-10">
+          <div className="space-y-6">
+            <h4 className="text-xs font-bold uppercase tracking-widest text-[#2D3436]">Composición Base</h4>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#D5D0CC] text-left text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">
+                  <th className="pb-3">Material</th>
+                  <th className="pb-3 text-right">Cantidad</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#D5D0CC]">
+                {glaze.recipe.base.map((item, i) => (
+                  <tr key={i}>
+                    <td className="py-3 font-medium">{item.material}</td>
+                    <td className="py-3 text-right font-mono">{item.amount.toFixed(1)}</td>
+                  </tr>
+                ))}
+                <tr className="bg-[#F7F7F5]/50">
+                  <td className="py-3 font-bold">Total Base</td>
+                  <td className="py-3 text-right font-bold font-mono">
+                    {glaze.recipe.base.reduce((acc, i) => acc + i.amount, 0).toFixed(1)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="space-y-6">
+            <h4 className="text-xs font-bold uppercase tracking-widest text-[#2D3436]">Adicionales</h4>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#D5D0CC] text-left text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">
+                  <th className="pb-3">Material</th>
+                  <th className="pb-3 text-right">Cantidad</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#D5D0CC]">
+                {glaze.recipe.additional.map((item, i) => (
+                  <tr key={i}>
+                    <td className="py-3 font-medium">{item.material}</td>
+                    <td className="py-3 text-right font-mono">{item.amount.toFixed(1)}</td>
+                  </tr>
+                ))}
+                {glaze.recipe.additional.length === 0 && (
+                  <tr><td colSpan={2} className="py-4 text-center text-xs text-[#8a168a]">Sin adicionales</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Observations */}
+      <div className="rounded-[32px] bg-white p-8 shadow-sm">
+        <h3 className="text-lg font-semibold tracking-tight">Observaciones de Laboratorio</h3>
+        <div className="mt-6 text-sm leading-relaxed text-[#636E72] whitespace-pre-wrap">
+          {glaze.observations || "Sin observaciones adicionales registradas."}
+        </div>
+      </div>
       </div>
     </div>
   );

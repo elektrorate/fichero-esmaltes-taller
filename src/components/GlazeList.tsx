@@ -1,17 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { Glaze } from '../types';
+import { Glaze, UserProfile } from '../types';
 import { STATUS_LABELS } from '../constants';
 import { generateBulkPDF } from '../lib/pdfUtils';
 import { motion, AnimatePresence } from 'motion/react';
-import { Edit2, Eye, MoreVertical, Tag, FileDown, CheckSquare, Square, Download, X, Check, Loader2 } from 'lucide-react';
+import { Edit2, Eye, MoreVertical, Tag, FileDown, CheckSquare, Square, Download, X, Check, Loader2, Filter, RotateCcw } from 'lucide-react';
 import { cn } from '../lib/utils';
+
+const FILTER_OPTIONS = {
+  colors: ['Blanco', 'Negro', 'Azul', 'Rojo', 'Amarillo', 'Verde', 'Naranja', 'Morado', 'Marrón', 'Gris', 'Transparente'],
+  finishes: ['Brillante', 'Mate', 'Satinado', 'Metálico', 'Opaco', 'Translúcido', 'Transparente', 'Cristalino', 'Texturizado'],
+  textures: ['Liso', 'Sedoso', 'Rugoso', 'Arenoso', 'Moteado', 'Craquelado', 'Lava / volcánico', 'Piel de naranja', 'Escurrido controlado'],
+  usages: ['Apto para vajilla / food safe', 'Decorativo']
+};
 
 interface GlazeListProps {
   searchQuery?: string;
   activeFilters?: any;
   highlightInventoryAlerts?: boolean;
+  profile?: UserProfile | null;
   onSelect: (id: string) => void;
   onEdit: (id: string) => void;
 }
@@ -20,6 +28,7 @@ export default function GlazeList({
   searchQuery = '',
   activeFilters = {},
   highlightInventoryAlerts = false,
+  profile = null,
   onSelect,
   onEdit
 }: GlazeListProps) {
@@ -28,6 +37,11 @@ export default function GlazeList({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+
+  const [filterColor, setFilterColor] = useState('');
+  const [filterFinish, setFilterFinish] = useState('');
+  const [filterTexture, setFilterTexture] = useState('');
+  const [filterUsage, setFilterUsage] = useState('');
 
   useEffect(() => {
     const q = query(collection(db, 'glazes'), orderBy('createdAt', 'desc'));
@@ -44,6 +58,15 @@ export default function GlazeList({
     );
   };
 
+  const hasActiveFilters = filterColor || filterFinish || filterTexture || filterUsage;
+
+  const clearFilters = () => {
+    setFilterColor('');
+    setFilterFinish('');
+    setFilterTexture('');
+    setFilterUsage('');
+  };
+
   const filteredGlazes = glazes.filter(glaze => {
     if (searchQuery) {
       const lowerQuery = searchQuery.toLowerCase();
@@ -51,6 +74,11 @@ export default function GlazeList({
       const matchesCode = glaze.code?.toLowerCase().includes(lowerQuery);
       if (!matchesName && !matchesCode) return false;
     }
+
+    if (filterColor && glaze.color !== filterColor) return false;
+    if (filterFinish && glaze.finish !== filterFinish) return false;
+    if (filterTexture && glaze.texture !== filterTexture) return false;
+    if (filterUsage && (!glaze.usage || !glaze.usage.includes(filterUsage))) return false;
 
     if (activeFilters.color && glaze.color !== activeFilters.color) return false;
     if (activeFilters.finish && glaze.finish !== activeFilters.finish) return false;
@@ -106,7 +134,7 @@ export default function GlazeList({
           </button>
           
           <AnimatePresence>
-            {isSelectionMode && selectedIds.length > 0 && (
+            {isSelectionMode && selectedIds.length > 0 && profile?.role === 'admin' && (
               <motion.button
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -135,17 +163,70 @@ export default function GlazeList({
           <div className="flex gap-3">
             <button 
               onClick={() => setSelectedIds(filteredGlazes.map(g => g.id!))}
-              className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3] hover:text-[#2D3436]"
+              className="text-xs font-bold uppercase tracking-widest text-[#8a168a] hover:text-[#2D3436]"
             >
               Seleccionar Todos
             </button>
             <button 
               onClick={() => setSelectedIds([])}
-              className="text-xs font-bold uppercase tracking-widest text-[#B2BEC3] hover:text-[#2D3436]"
+              className="text-xs font-bold uppercase tracking-widest text-[#8a168a] hover:text-[#2D3436]"
             >
               Deseleccionar
             </button>
           </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#E4E4E2] bg-white p-4">
+        <div className="flex items-center gap-2 text-[#8a168a]">
+          <Filter size={16} />
+          <span className="text-[11px] font-bold uppercase tracking-widest">Filtros</span>
+        </div>
+        <select
+          value={filterColor}
+          onChange={e => setFilterColor(e.target.value)}
+          className="rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-xs font-medium outline-none focus:border-[#2D3436] focus:bg-white"
+        >
+          <option value="">Color</option>
+          {FILTER_OPTIONS.colors.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select
+          value={filterFinish}
+          onChange={e => setFilterFinish(e.target.value)}
+          className="rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-xs font-medium outline-none focus:border-[#2D3436] focus:bg-white"
+        >
+          <option value="">Acabado</option>
+          {FILTER_OPTIONS.finishes.map(f => <option key={f} value={f}>{f}</option>)}
+        </select>
+        <select
+          value={filterTexture}
+          onChange={e => setFilterTexture(e.target.value)}
+          className="rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-xs font-medium outline-none focus:border-[#2D3436] focus:bg-white"
+        >
+          <option value="">Textura</option>
+          {FILTER_OPTIONS.textures.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select
+          value={filterUsage}
+          onChange={e => setFilterUsage(e.target.value)}
+          className="rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-xs font-medium outline-none focus:border-[#2D3436] focus:bg-white"
+        >
+          <option value="">Uso</option>
+          {FILTER_OPTIONS.usages.map(u => <option key={u} value={u}>{u}</option>)}
+        </select>
+        {hasActiveFilters && (
+          <button
+            onClick={clearFilters}
+            className="flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-100"
+          >
+            <RotateCcw size={12} />
+            Limpiar
+          </button>
+        )}
+        {hasActiveFilters && (
+          <span className="ml-auto text-[11px] font-medium text-[#636E72]">
+            {filteredGlazes.length} resultado{filteredGlazes.length === 1 ? '' : 's'}
+          </span>
         )}
       </div>
 
@@ -222,11 +303,11 @@ export default function GlazeList({
                           <div className="flex items-start justify-between">
                             <div>
                               <h4 className="text-lg font-semibold tracking-tight">{glaze.name}</h4>
-                              <p className="text-xs font-medium text-[#B2BEC3] uppercase tracking-widest mt-0.5">{glaze.code}</p>
+                              <p className="text-xs font-medium text-[#8a168a] uppercase tracking-widest mt-0.5">{glaze.code}</p>
                             </div>
                             {!isSelectionMode && (
                               <div className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[#F7F7F5]">
-                                <MoreVertical size={16} className="text-[#B2BEC3]" />
+                                <MoreVertical size={16} className="text-[#8a168a]" />
                               </div>
                             )}
                           </div>
@@ -246,7 +327,7 @@ export default function GlazeList({
                               <div className="h-6 w-6 rounded-full bg-[#E4E4E2]" />
                               <span className="text-[11px] font-medium text-[#636E72]">{glaze.authorName}</span>
                             </div>
-                            <span className="text-[11px] text-[#B2BEC3]">
+                            <span className="text-[11px] text-[#8a168a]">
                               {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
                             </span>
                           </div>
@@ -331,11 +412,11 @@ export default function GlazeList({
               <div className="flex items-start justify-between">
                 <div>
                   <h4 className="text-lg font-semibold tracking-tight">{glaze.name}</h4>
-                  <p className="text-xs font-medium text-[#B2BEC3] uppercase tracking-widest mt-0.5">{glaze.code}</p>
+                  <p className="text-xs font-medium text-[#8a168a] uppercase tracking-widest mt-0.5">{glaze.code}</p>
                 </div>
                 {!isSelectionMode && (
                   <div className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[#F7F7F5]">
-                    <MoreVertical size={16} className="text-[#B2BEC3]" />
+                    <MoreVertical size={16} className="text-[#8a168a]" />
                   </div>
                 )}
               </div>
@@ -354,7 +435,7 @@ export default function GlazeList({
                   <div className="h-6 w-6 rounded-full bg-[#E4E4E2]" />
                   <span className="text-[11px] font-medium text-[#636E72]">{glaze.authorName}</span>
                 </div>
-                <span className="text-[11px] text-[#B2BEC3]">
+                <span className="text-[11px] text-[#8a168a]">
                   {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
                 </span>
               </div>

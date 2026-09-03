@@ -303,7 +303,7 @@ export default function App() {
                   : "text-[#636E72] hover:bg-[#F7F7F5] hover:text-[#2D3436]"
               )}
             >
-              <item.icon size={20} className={cn(currentView === item.id ? "text-[#2D3436]" : "text-[#B2BEC3]")} />
+              <item.icon size={20} className={cn(currentView === item.id ? "text-[#2D3436]" : "text-[#8a168a]")} />
               {(isSidebarOpen || isDesktop) && <span>{item.label}</span>}
             </button>
           ))}
@@ -345,7 +345,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-4">
             <div className="relative hidden md:block">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#B2BEC3]" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8a168a]" />
               <input 
                 type="text" 
                 value={searchQuery}
@@ -381,14 +381,14 @@ export default function App() {
                 >
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-semibold tracking-tight">Filtros Activos</h3>
-                    <button onClick={() => setIsFilterMenuOpen(false)} className="text-[#B2BEC3] hover:text-[#2D3436]">
+                    <button onClick={() => setIsFilterMenuOpen(false)} className="text-[#8a168a] hover:text-[#2D3436]">
                       <X size={18} />
                     </button>
                   </div>
 
                   <div className="space-y-4">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Color</label>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Color</label>
                       <select 
                         value={pendingFilters.color || ''}
                         onChange={(e) => updatePendingFilter('color', e.target.value)}
@@ -400,7 +400,7 @@ export default function App() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Acabado</label>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Acabado</label>
                       <select 
                         value={pendingFilters.finish || ''}
                         onChange={(e) => updatePendingFilter('finish', e.target.value)}
@@ -412,7 +412,7 @@ export default function App() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Textura</label>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Textura</label>
                       <select 
                         value={pendingFilters.texture || ''}
                         onChange={(e) => updatePendingFilter('texture', e.target.value)}
@@ -424,7 +424,7 @@ export default function App() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Familia Química</label>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Familia Química</label>
                       <select 
                         value={pendingFilters.chemicalFamily || ''}
                         onChange={(e) => updatePendingFilter('chemicalFamily', e.target.value)}
@@ -436,7 +436,7 @@ export default function App() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#B2BEC3]">Estado</label>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Estado</label>
                       <select 
                         value={pendingFilters.status || ''}
                         onChange={(e) => updatePendingFilter('status', e.target.value)}
@@ -494,6 +494,7 @@ export default function App() {
                 <GlazeList 
                   searchQuery={searchQuery}
                   activeFilters={activeFilters}
+                  profile={profile}
                   onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }} 
                   onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}
                 />
@@ -503,6 +504,7 @@ export default function App() {
                   searchQuery={searchQuery}
                   activeFilters={activeFilters}
                   highlightInventoryAlerts
+                  profile={profile}
                   onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }}
                   onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}
                 />
@@ -512,11 +514,13 @@ export default function App() {
                   glazeId={selectedGlazeId} 
                   onCancel={() => setCurrentView('repository')} 
                   onSuccess={() => setCurrentView('repository')}
+                  onDelete={() => setCurrentView('repository')}
                 />
               )}
               {currentView === 'detail' && selectedGlazeId && (
                 <GlazeDetail 
                   id={selectedGlazeId} 
+                  profile={profile}
                   onEdit={() => setCurrentView('create')}
                   onBack={() => setCurrentView('repository')}
                 />

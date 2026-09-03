@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { db, auth, OperationType, handleFirestoreError } from '../lib/firebase';
-import { doc, getDoc, setDoc, addDoc, collection, serverTimestamp, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, deleteDoc, collection, serverTimestamp, query, orderBy, limit, onSnapshot, where, getDocs } from 'firebase/firestore';
 import { Glaze, RecipeItem, GlazeStatus } from '../types';
 import { STATUS_LABELS } from '../constants';
 import { motion } from 'motion/react';
@@ -11,6 +11,7 @@ interface GlazeFormProps {
   glazeId: string | null;
   onCancel: () => void;
   onSuccess: () => void;
+  onDelete: (id: string) => void;
 }
 
 const CATEGORIES = {
@@ -124,8 +125,11 @@ function AutocompleteInput({ value, onChange, placeholder, wrapperClassName, inp
   );
 }
 
-export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormProps) {
+export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: GlazeFormProps) {
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [codeDuplicate, setCodeDuplicate] = useState(false);
+  const [codeManuallyEdited, setCodeManuallyEdited] = useState(false);
   const [calcMode, setCalcMode] = useState<'percent' | 'grams'>('grams');
   const [targetWeight, setTargetWeight] = useState(100);
 
@@ -182,10 +186,25 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
       generatedCode += `-${variant.toUpperCase()}`;
     }
     
-    if (formData.code !== generatedCode) {
+    if (formData.code !== generatedCode && !codeManuallyEdited) {
       setFormData(prev => ({ ...prev, code: generatedCode }));
     }
   }, [formData.color, formData.finish, formData.usage, nextNumber, variant]);
+
+  useEffect(() => {
+    if (!formData.code || formData.code.length < 5) {
+      setCodeDuplicate(false);
+      return;
+    }
+    const checkDuplicate = async () => {
+      const q = query(collection(db, 'glazes'), where('code', '==', formData.code));
+      const snapshot = await getDocs(q);
+      const isDuplicate = !snapshot.empty && snapshot.docs.some(d => d.id !== glazeId);
+      setCodeDuplicate(isDuplicate);
+    };
+    const timer = setTimeout(checkDuplicate, 500);
+    return () => clearTimeout(timer);
+  }, [formData.code, glazeId]);
 
   useEffect(() => {
     if (glazeId) {
@@ -310,14 +329,34 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
           } else {
             newGallery[targetIdx] = base64String;
           }
+          if (newGallery.length < 8) {
+            newGallery.push('');
+          }
           setFormData({ ...formData, gallery: newGallery });
         }
       };
     };
   };
 
+  const handleDelete = async () => {
+    if (!glazeId) return;
+    const confirmed = window.confirm('¿Estás seguro de que quieres eliminar esta ficha? Esta acción no se puede deshacer.');
+    if (!confirmed) return;
+
+    setDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'glazes', glazeId));
+      onDelete(glazeId);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'glazes');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (codeDuplicate) return;
     setLoading(true);
     try {
       const recipe = formData.recipe
@@ -358,12 +397,23 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
           <p className="text-sm text-[#636E72]">Completa los datos técnicos del laboratorio.</p>
         </div>
         <div className="flex gap-3">
+          {glazeId && (
+            <button 
+              type="button" 
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex items-center gap-2 rounded-xl border border-red-200 px-6 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+            >
+              {deleting ? <Spinner className="h-4 w-4 animate-spin" /> : <Trash2 size={18} />}
+              Eliminar
+            </button>
+          )}
           <button type="button" onClick={onCancel} className="rounded-xl border border-[#E4E4E2] px-6 py-2.5 text-sm font-medium hover:bg-white">
             Cancelar
           </button>
           <button 
             type="submit" 
-            disabled={loading}
+            disabled={loading || codeDuplicate}
             className="flex items-center gap-2 rounded-xl bg-[#2D3436] px-6 py-2.5 text-sm font-medium text-white hover:bg-black disabled:opacity-50"
           >
             {loading ? <Spinner className="h-4 w-4 animate-spin" /> : <Save size={18} />}
@@ -378,7 +428,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
             <div className="grid grid-cols-1 gap-6">
               <div className="space-y-2">
-                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Nombre del Esmalte</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Nombre del Esmalte</label>
                 <input 
                   required
                   value={formData.name}
@@ -388,26 +438,39 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Código Generado</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Código</label>
                 <div className="flex items-center gap-2">
                   <input 
-                    readOnly
                     value={formData.code}
-                    className="flex-1 rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-3 text-sm font-mono font-bold text-[#2D3436] outline-none" 
+                    onChange={e => {
+                      setCodeManuallyEdited(true);
+                      setFormData({ ...formData, code: e.target.value.toUpperCase() });
+                    }}
+                    className={`flex-1 rounded-xl border bg-[#F7F7F5] px-4 py-3 text-sm font-mono font-bold outline-none ${
+                      codeDuplicate 
+                        ? 'border-red-400 bg-red-50 text-red-700' 
+                        : 'border-[#E4E4E2] text-[#2D3436] focus:border-[#2D3436] focus:bg-white'
+                    }`}
                   />
                   <div className="group relative">
                     <Info size={16} className="text-[#B2BEC3]" />
-                    <div className="absolute bottom-full right-0 mb-2 hidden w-48 rounded-lg bg-[#2D3436] p-2 text-[10px] text-white group-hover:block">
-                      El código se genera automáticamente: COLOR-ACABADO-USO-NÚMERO-VARIANTE
+                    <div className="absolute bottom-full right-0 mb-2 hidden w-56 rounded-lg bg-[#2D3436] p-2 text-[10px] text-white group-hover:block z-50">
+                      Formato: COLOR-ACABADO-USO-NÚMERO-VARIANTE. Puedes editarlo manualmente.
                     </div>
                   </div>
                 </div>
+                {codeDuplicate && (
+                  <p className="flex items-center gap-1 text-xs font-medium text-red-600">
+                    <AlertCircle size={14} />
+                    Este código ya existe. Modifícalo para continuar.
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="grid grid-cols-1 gap-6 md:grid-cols-4">
               <div className="space-y-2">
-                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Color</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Color</label>
                 <select 
                   value={formData.color}
                   onChange={e => setFormData({ ...formData, color: e.target.value })}
@@ -417,7 +480,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Acabado</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Acabado</label>
                 <select 
                   value={formData.finish}
                   onChange={e => setFormData({ ...formData, finish: e.target.value })}
@@ -427,7 +490,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Uso</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Uso</label>
                 <select 
                   value={formData.usage?.[0] || ''}
                   onChange={e => setFormData({ ...formData, usage: [e.target.value] })}
@@ -437,7 +500,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Variante (Opcional)</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Variante (Opcional)</label>
                 <input 
                   value={variant}
                   onChange={e => setVariant(e.target.value.toUpperCase().slice(0, 1))}
@@ -450,7 +513,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
 
             <div className="grid grid-cols-1 gap-6">
               <div className="space-y-2">
-                <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Textura</label>
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Textura</label>
                 <select 
                   value={formData.texture}
                   onChange={e => setFormData({ ...formData, texture: e.target.value })}
@@ -462,7 +525,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
             </div>
 
             <div className="space-y-2">
-              <label className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Observaciones</label>
+              <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Observaciones</label>
               <textarea 
                 value={formData.observations}
                 onChange={e => setFormData({ ...formData, observations: e.target.value })}
@@ -470,6 +533,46 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                 className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-3 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
                 placeholder="Notas sobre el comportamiento, defectos o consejos..."
               />
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+              <div className="space-y-2">
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Temperatura</label>
+                <input 
+                  value={formData.temperature || ''}
+                  onChange={e => setFormData({ ...formData, temperature: e.target.value })}
+                  className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-3 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
+                  placeholder="Ej. 1280°C"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Atmósfera</label>
+                <select 
+                  value={formData.atmosphere || 'Oxidación'}
+                  onChange={e => setFormData({ ...formData, atmosphere: e.target.value })}
+                  className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-3 text-sm outline-none focus:border-[#2D3436] focus:bg-white"
+                >
+                  <option value="Oxidación">Oxidación</option>
+                  <option value="Reducción">Reducción</option>
+                  <option value="Neutra">Neutra</option>
+                  <option value="Híbrida">Híbrida</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Pasta</label>
+                <select 
+                  value={formData.clayBody || 'Gres / Porcelana'}
+                  onChange={e => setFormData({ ...formData, clayBody: e.target.value })}
+                  className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-3 text-sm outline-none focus:border-[#2D3436] focus:bg-white"
+                >
+                  <option value="Gres / Porcelana">Gres / Porcelana</option>
+                  <option value="Porcelana">Porcelana</option>
+                  <option value="Gres">Gres</option>
+                  <option value="Loza">Loza</option>
+                  <option value="Terracota">Terracota</option>
+                  <option value="Bisque">Bisque</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -580,7 +683,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
               </div>
               <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
                 <div className="flex-1 space-y-1">
-                  <p className="text-[11px] font-bold uppercase tracking-widest text-[#7F8A93]">Nuevo Peso Total Base</p>
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-[#8a168a]">Nuevo Peso Total Base</p>
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <input 
                       type="number"
@@ -599,16 +702,34 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 sm:pt-5">
-                  {[100, 500, 1000, 2000].map(w => (
-                    <button 
-                      key={w} 
-                      type="button" 
-                      onClick={() => setTargetWeight(w)}
-                      className="rounded-lg border border-[#E4E4E2] px-3 py-1 text-[10px] font-bold hover:bg-[#F7F7F5]"
-                    >
-                      {w >= 1000 ? `${w/1000}kg` : `${w}g`}
-                    </button>
-                  ))}
+                  <button 
+                    type="button" 
+                    onClick={() => setTargetWeight(prev => Math.max(0, Math.round((baseTotal * 0.9) * 10) / 10))}
+                    className="rounded-lg border border-[#E4E4E2] px-3 py-1 text-[10px] font-bold hover:bg-[#F7F7F5]"
+                  >
+                    -10%
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setTargetWeight(prev => Math.round((baseTotal * 1.1) * 10) / 10)}
+                    className="rounded-lg border border-[#E4E4E2] px-3 py-1 text-[10px] font-bold hover:bg-[#F7F7F5]"
+                  >
+                    +10%
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setTargetWeight(prev => Math.max(0, Math.round((prev - 10) * 10) / 10))}
+                    className="rounded-lg border border-[#E4E4E2] px-3 py-1 text-[10px] font-bold hover:bg-[#F7F7F5]"
+                  >
+                    -10g
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setTargetWeight(prev => Math.round((prev + 10) * 10) / 10)}
+                    className="rounded-lg border border-[#E4E4E2] px-3 py-1 text-[10px] font-bold hover:bg-[#F7F7F5]"
+                  >
+                    +10g
+                  </button>
                 </div>
               </div>
             </div>
@@ -619,7 +740,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
         <div className="space-y-8">
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
             <div className="flex items-center justify-between">
-              <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Imagen Principal</h4>
+              <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Imagen Principal</h4>
               <label className="flex cursor-pointer items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#2D3436] hover:opacity-70 transition-all">
                 <Upload size={14} />
                 Subir Archivo
@@ -652,41 +773,24 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
 
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
             <div className="flex items-center justify-between">
-              <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Galería de Fotos ({formData.gallery?.length || 0})</h4>
+              <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Galería de Fotos ({formData.gallery?.length || 0})</h4>
             </div>
             <div className="grid grid-cols-2 gap-3">
               {(formData.gallery || []).map((img, idx) => (
-                <div key={idx} className="group relative aspect-square overflow-hidden rounded-2xl border border-[#E4E4E2] bg-[#F7F7F5] flex flex-col">
-                  {img ? (
-                    <img src={img} className="flex-1 h-full w-full object-cover" alt={`Gallery ${idx}`} referrerPolicy="no-referrer" />
-                  ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center text-[#B2BEC3] pb-6 cursor-pointer hover:bg-white transition-all">
-                      <label className="flex h-full w-full flex-col items-center justify-center cursor-pointer">
-                        <Upload size={20} className="mb-1" />
-                        <span className="text-[10px] uppercase font-bold">Examinar</span>
-                        <input 
-                          type="file" 
-                          accept="image/*" 
-                          className="hidden" 
-                          onChange={(e) => handleImageUpload(e, idx)}
-                        />
-                      </label>
-                    </div>
-                  )}
-                  <input 
-                    type="text" 
-                    placeholder="URL de imagen..."
-                    value={img}
-                    onChange={(e) => {
-                       const newGallery = [...(formData.gallery || [])];
-                       newGallery[idx] = e.target.value;
-                       setFormData({ ...formData, gallery: newGallery });
-                    }}
-                    className="absolute bottom-2 left-2 right-2 rounded-lg border border-[#E4E4E2] bg-white/90 px-2 py-1.5 text-[10px] outline-none backdrop-blur-sm focus:border-[#2D3436]"
-                  />
-                  <div className="absolute inset-0 hidden flex-col items-center justify-center gap-2 bg-black/50 backdrop-blur-sm group-hover:flex">
-                    <button 
-                      type="button" 
+                <div key={idx} className="relative rounded-2xl border border-[#E4E4E2] bg-[#F7F7F5] overflow-hidden flex flex-col">
+                  <div className="aspect-square overflow-hidden relative">
+                    {img ? (
+                      <img src={img} className="h-full w-full object-cover" alt={`Gallery ${idx}`} referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full text-[#B2BEC3]">
+                        <ImageIcon size={24} strokeWidth={1} />
+                        <span className="text-[10px] mt-1 font-bold">Sin imagen</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-center gap-1 p-1.5 bg-[#F4F4F2]">
+                    <button
+                      type="button"
                       onClick={() => {
                         const newGallery = [...(formData.gallery || [])];
                         newGallery.splice(idx, 1);
@@ -694,32 +798,48 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
                         if (oldMain) newGallery.push(oldMain);
                         setFormData({ ...formData, mainImage: img, gallery: newGallery });
                       }}
-                      className="rounded-lg bg-white/90 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-[#2D3436] hover:scale-105 active:scale-95 transition-all"
+                      className="rounded-lg bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-[#2D3436] border border-[#E4E4E2] hover:bg-[#2D3436] hover:text-white transition-all"
                     >
                       Principal
                     </button>
-                    <button 
-                      type="button" 
+                    <label className="rounded-lg bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-[#2D3436] border border-[#E4E4E2] hover:bg-[#2D3436] hover:text-white transition-all cursor-pointer">
+                      Subir
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => handleImageUpload(e, idx)}
+                      />
+                    </label>
+                    <button
+                      type="button"
                       onClick={() => {
+                        if (!window.confirm('¿Estás seguro de que quieres eliminar esta foto?')) return;
                         const newGallery = formData.gallery?.filter((_, i) => i !== idx);
                         setFormData({ ...formData, gallery: newGallery });
                       }}
-                      className="rounded-lg bg-red-500/90 p-2 text-white hover:bg-red-500 hover:scale-105 active:scale-95 transition-all"
+                      className="rounded-lg bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-red-500 border border-red-200 hover:bg-red-500 hover:text-white transition-all"
                     >
-                      <Trash2 size={14} />
+                      Eliminar
                     </button>
                   </div>
                 </div>
               ))}
               {(formData.gallery?.length || 0) < 8 ? (
-                <button 
-                  type="button" 
-                  onClick={() => setFormData({ ...formData, gallery: [...(formData.gallery || []), ''] })} 
-                  className="flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#E4E4E2] text-[#B2BEC3] transition-all hover:border-[#2D3436] hover:text-[#2D3436] hover:bg-[#F4F4F2]"
+                <label 
+                  className="flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#E4E4E2] text-[#B2BEC3] transition-all hover:border-[#2D3436] hover:text-[#2D3436] hover:bg-[#F4F4F2] cursor-pointer"
                 >
                   <Plus size={24} />
-                  <span className="text-[10px] font-bold uppercase tracking-widest mt-1">Añadir Hueco</span>
-                </button>
+                  <span className="text-[10px] font-bold uppercase tracking-widest mt-1">Añadir Foto</span>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    className="hidden" 
+                    onChange={(e) => {
+                      handleImageUpload(e, -1);
+                    }}
+                  />
+                </label>
               ) : (
                 <div className="flex aspect-square flex-col items-center justify-center rounded-2xl border border-[#E4E4E2] bg-[#F4F4F2] text-[#B2BEC3]">
                   <span className="text-[10px] font-bold uppercase tracking-widest px-4 text-center">Límite de Galería Alcanzado</span>
@@ -732,7 +852,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess }: GlazeFormPro
           </div>
 
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
-            <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#7F8A93]">Estado de la Ficha</h4>
+            <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Estado de la Ficha</h4>
             <div className="space-y-3">
               {(['draft', 'pending', 'validated', 'published'] as GlazeStatus[]).map(s => (
                 <button
