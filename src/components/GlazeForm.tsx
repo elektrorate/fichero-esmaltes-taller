@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { db, auth, OperationType, handleFirestoreError } from '../lib/firebase';
 import { doc, getDoc, setDoc, addDoc, deleteDoc, collection, serverTimestamp, query, orderBy, limit, onSnapshot, where, getDocs } from 'firebase/firestore';
 import { Glaze, RecipeItem, GlazeStatus } from '../types';
 import { STATUS_LABELS } from '../constants';
 import { motion } from 'motion/react';
-import { Save, Plus, Trash2, Calculator, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload } from 'lucide-react';
+import { Save, Plus, Trash2, Calculator, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload, FileInput, Copy } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface GlazeFormProps {
@@ -17,6 +18,7 @@ interface GlazeFormProps {
 const CATEGORIES = {
   finish: [
     { label: 'Brillante', code: 'BR' },
+    { label: 'Semi-brillante', code: 'SB' },
     { label: 'Mate', code: 'MT' },
     { label: 'Satinado', code: 'ST' },
     { label: 'Opaco', code: 'OP' },
@@ -68,6 +70,283 @@ const RAW_MATERIALS = [
   'Ceniza vegetal tamizada', 'Ceniza de madera', 'Fluorita', 'Bórax', 'Ácido bórico',
   'Sulfato de bario', 'Óxido de molibdeno', 'Óxido de titanio anatasa', 'Carburo de silicio'
 ];
+
+const GLAZY_DATA_BASE_URLS = [
+  'https://cdn.jsdelivr.net/gh/derekphilipau/glazy-data@master',
+  'https://raw.githubusercontent.com/derekphilipau/glazy-data/master'
+];
+const FALLBACK_GLAZY_DATA_FILE = 'glazy_20260531.yaml.gz';
+const GLAZY_API_URLS = ['/glazy-api/api', 'https://api.glazy.org/api'];
+const GLAZY_CLOUD_URL = 'https://ddms6z64wp3a6.cloudfront.net';
+
+interface GlazyRecipeImport {
+  id: string;
+  name: string;
+  state?: string;
+  cone?: string;
+  surface?: string;
+  transparency?: string;
+  atmospheres: string[];
+  country?: string;
+  subtype?: string;
+  description?: string;
+  mainImage?: string;
+  gallery?: string[];
+  base: RecipeItem[];
+  additional: RecipeItem[];
+  totalBase: number;
+}
+
+const decodeYamlValue = (value: string) => value
+  .trim()
+  .replace(/^'|'$/g, '')
+  .replace(/^"|"$/g, '')
+  .replace(/''/g, "'");
+
+const getYamlField = (block: string, field: string) => {
+  const match = block.match(new RegExp(`\\n\\s{2}${field}:\\s*(.+)`));
+  return match ? decodeYamlValue(match[1]) : undefined;
+};
+
+const getIndentedYamlField = (block: string, field: string) => {
+  const match = block.match(new RegExp(`\\n\\s+${field}:\\s*(.+)`));
+  return match ? decodeYamlValue(match[1]) : undefined;
+};
+
+const extractGlazyRecipeId = (url: string) => {
+  const match = url.match(/(?:recipes\/|^)(\d{3,})(?:\D|$)/);
+  return match?.[1];
+};
+
+const getGlazyImageUrl = (materialId: number | string, filename?: string, size = 'l') => {
+  if (!filename) return '';
+  const id = `${materialId}`;
+  const folder = id.slice(-2);
+  return `${GLAZY_CLOUD_URL}/uploads/recipes/${folder}/${size}_${filename}`;
+};
+
+const mapGlazyStatus = (state?: string): GlazeStatus => {
+  const normalized = state?.toLowerCase() || '';
+  if (normalized.includes('production')) return 'published';
+  if (normalized.includes('testing')) return 'pending';
+  if (normalized.includes('discontinued')) return 'archived';
+  return 'draft';
+};
+
+const mapGlazySurface = (surface?: string) => {
+  const normalized = surface?.toLowerCase() || '';
+  if (normalized.includes('semi') && (normalized.includes('gloss') || normalized.includes('bright'))) return 'Semi-brillante';
+  if (normalized.includes('gloss') || normalized.includes('bright')) return 'Brillante';
+  if (normalized.includes('satin')) return 'Satinado';
+  if (normalized.includes('matte') || normalized.includes('matt')) return 'Mate';
+  if (normalized.includes('opaque')) return 'Opaco';
+  return 'Brillante';
+};
+
+const inferGlazyColor = (recipe: Pick<GlazyRecipeImport, 'name' | 'subtype' | 'description'>) => {
+  const text = `${recipe.name} ${recipe.subtype || ''} ${recipe.description || ''}`.toLowerCase();
+  if (text.includes('blue') || text.includes('cobalt')) return 'Azul';
+  if (text.includes('green') || text.includes('celadon') || text.includes('copper')) return 'Verde';
+  if (text.includes('purple') || text.includes('eggplant') || text.includes('manganese')) return 'Púrpura';
+  if (text.includes('red')) return 'Rojo';
+  if (text.includes('yellow')) return 'Amarillo';
+  if (text.includes('orange')) return 'Naranja';
+  if (text.includes('black')) return 'Negro';
+  if (text.includes('white')) return 'Blanco';
+  if (text.includes('brown') || text.includes('iron')) return 'Marrón';
+  if (text.includes('gray') || text.includes('grey')) return 'Gris';
+  return 'Blanco';
+};
+
+const inferGlazyTexture = (recipe: Pick<GlazyRecipeImport, 'name' | 'subtype' | 'description'>) => {
+  const text = `${recipe.name} ${recipe.subtype || ''} ${recipe.description || ''}`.toLowerCase();
+  if (text.includes('crawl')) return 'Craquelado';
+  if (text.includes('speck') || text.includes('crystal')) return 'Moteado';
+  if (text.includes('lava') || text.includes('volcan')) return 'Lava / volcánico';
+  if (text.includes('rough')) return 'Rugoso';
+  return 'Liso';
+};
+
+const mapAtmosphere = (atmospheres: string[]) => {
+  const first = atmospheres[0]?.toLowerCase() || '';
+  if (first.includes('reduction')) return 'Reducción';
+  if (first.includes('neutral')) return 'Neutra';
+  if (first.includes('oxidation')) return 'Oxidación';
+  return 'Oxidación';
+};
+
+const parseYamlList = (value?: string) => {
+  if (!value) return [];
+  return value
+    .replace(/^\[|\]$/g, '')
+    .split(',')
+    .map(item => decodeYamlValue(item))
+    .filter(Boolean);
+};
+
+const parseGlazyRecipeBlock = (block: string, id: string): GlazyRecipeImport => {
+  const name = getYamlField(block, 'Name') || `Glazy ${id}`;
+  const recipe: GlazyRecipeImport = {
+    id,
+    name,
+    state: getYamlField(block, 'State'),
+    cone: getYamlField(block, 'Cone'),
+    surface: getYamlField(block, 'Surface'),
+    transparency: getYamlField(block, 'Transparency'),
+    atmospheres: parseYamlList(getYamlField(block, 'Atmospheres')),
+    country: getYamlField(block, 'Country'),
+    subtype: getYamlField(block, 'Subtype'),
+    description: getYamlField(block, 'Description'),
+    base: [],
+    additional: [],
+    totalBase: 0
+  };
+
+  const ingredientMatches = block.matchAll(/\n\s{4}-\n([\s\S]*?)(?=\n\s{4}-\n|\n\s{2}[A-Z][^:\n]+:|$)/g);
+  for (const ingredientMatch of ingredientMatches) {
+    const ingredient = ingredientMatch[1];
+    const material = getIndentedYamlField(`\n${ingredient}`, 'Name');
+    const amount = Number(getIndentedYamlField(`\n${ingredient}`, 'Percentage'));
+    const isAdditional = /\n\s+Additional:\s+true/.test(ingredient);
+
+    if (material && Number.isFinite(amount)) {
+      const item = { material, amount };
+      if (isAdditional) {
+        recipe.additional.push(item);
+      } else {
+        recipe.base.push(item);
+      }
+    }
+  }
+
+  recipe.totalBase = recipe.base.reduce((acc, item) => acc + item.amount, 0);
+  return recipe;
+};
+
+const fetchGlazyRecipeFromApi = async (sourceUrl: string) => {
+  const recipeId = extractGlazyRecipeId(sourceUrl);
+  if (!recipeId) {
+    throw new Error('Pega un enlace válido de Glazy, por ejemplo https://glazy.org/recipes/669259');
+  }
+
+  let recipeData: any = null;
+  for (const apiUrl of GLAZY_API_URLS) {
+    try {
+      const response = await fetch(`${apiUrl}/recipes/${recipeId}`, { cache: 'no-store' });
+      const contentType = response.headers.get('content-type') || '';
+      if (response.ok && contentType.includes('application/json')) {
+        const payload = await response.json();
+        recipeData = payload.data;
+        break;
+      }
+    } catch {
+      recipeData = null;
+    }
+  }
+
+  if (!recipeData) {
+    throw new Error('No se pudo leer la API pública de Glazy.');
+  }
+
+  const base: RecipeItem[] = [];
+  const additional: RecipeItem[] = [];
+  for (const component of recipeData.materialComponents || []) {
+    const item = {
+      material: component.material?.name || 'Material sin nombre',
+      amount: Number(component.percentageAmount) || 0
+    };
+
+    if (component.isAdditional) {
+      additional.push(item);
+    } else {
+      base.push(item);
+    }
+  }
+
+  const imageUrls = (recipeData.images || [])
+    .map((image: any) => getGlazyImageUrl(recipeData.id, image.filename))
+    .filter(Boolean);
+  const mainImage = getGlazyImageUrl(recipeData.id, recipeData.thumbnail?.filename)
+    || imageUrls[0]
+    || '';
+
+  return {
+    id: `${recipeData.id}`,
+    name: recipeData.name || `Glazy ${recipeId}`,
+    state: recipeData.materialStateName,
+    cone: recipeData.fromOrtonConeName && recipeData.toOrtonConeName
+      ? `${recipeData.fromOrtonConeName} - ${recipeData.toOrtonConeName}`
+      : recipeData.fromOrtonConeName || recipeData.toOrtonConeName,
+    surface: recipeData.surfaceTypeName,
+    transparency: recipeData.transparencyTypeName,
+    atmospheres: (recipeData.atmospheres || []).map((atmosphere: any) => atmosphere.name).filter(Boolean),
+    country: recipeData.countryName,
+    subtype: recipeData.materialTypeName,
+    description: recipeData.description,
+    mainImage,
+    gallery: imageUrls.filter((imageUrl: string) => imageUrl !== mainImage),
+    base,
+    additional,
+    totalBase: Number(recipeData.materialComponentTotalAmount) || base.reduce((acc, item) => acc + item.amount, 0)
+  } satisfies GlazyRecipeImport;
+};
+
+const fetchGlazyRecipeFromPublicData = async (sourceUrl: string) => {
+  const recipeId = extractGlazyRecipeId(sourceUrl);
+  if (!recipeId) {
+    throw new Error('Pega un enlace válido de Glazy, por ejemplo https://glazy.org/recipes/669259');
+  }
+
+  if (!('DecompressionStream' in window)) {
+    throw new Error('Este navegador no permite descomprimir el archivo público de Glazy. Prueba desde Chrome actualizado.');
+  }
+
+  let latestFile = FALLBACK_GLAZY_DATA_FILE;
+  for (const baseUrl of GLAZY_DATA_BASE_URLS) {
+    try {
+      const latestResponse = await fetch(`${baseUrl}/LATEST`, { cache: 'no-store' });
+      if (latestResponse.ok) {
+        latestFile = (await latestResponse.text()).trim() || FALLBACK_GLAZY_DATA_FILE;
+        break;
+      }
+    } catch {
+      latestFile = FALLBACK_GLAZY_DATA_FILE;
+    }
+  }
+
+  let dataResponse: Response | null = null;
+  for (const baseUrl of GLAZY_DATA_BASE_URLS) {
+    try {
+      const response = await fetch(`${baseUrl}/${latestFile}`, { cache: 'force-cache' });
+      if (response.ok && response.body) {
+        dataResponse = response;
+        break;
+      }
+    } catch {
+      dataResponse = null;
+    }
+  }
+
+  if (!dataResponse?.body) {
+    throw new Error('No se pudo descargar la base pública de recetas de Glazy. Revisa tu conexión o intenta de nuevo.');
+  }
+
+  const decompressedStream = dataResponse.body.pipeThrough(new DecompressionStream('gzip'));
+  const yamlText = await new Response(decompressedStream).text();
+  const recipePattern = new RegExp(`\\n-\\n\\s{2}ID:\\s*${recipeId}\\n[\\s\\S]*?(?=\\n-\\n\\s{2}ID:|$)`);
+  const recipeBlock = yamlText.match(recipePattern)?.[0];
+
+  if (!recipeBlock || !/\n\s{2}Type:\s*'?Recipe'?/.test(recipeBlock)) {
+    throw new Error(`No encontré la receta ${recipeId} en el archivo público de Glazy.`);
+  }
+
+  const recipe = parseGlazyRecipeBlock(recipeBlock, recipeId);
+  if (recipe.base.length === 0) {
+    throw new Error(`Encontré la receta ${recipeId}, pero no pude leer sus ingredientes.`);
+  }
+
+  return recipe;
+};
 
 // Helper to remove accents for search
 function normalizeString(str: string) {
@@ -128,6 +407,12 @@ function AutocompleteInput({ value, onChange, placeholder, wrapperClassName, inp
 export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: GlazeFormProps) {
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [sourceError, setSourceError] = useState('');
+  const [sourceUrl, setSourceUrl] = useState('https://glazy.org/recipes/669259');
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [bulkImportMessage, setBulkImportMessage] = useState('');
   const [codeDuplicate, setCodeDuplicate] = useState(false);
   const [codeManuallyEdited, setCodeManuallyEdited] = useState(false);
   const [calcMode, setCalcMode] = useState<'percent' | 'grams'>('grams');
@@ -275,6 +560,169 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
     setFormData({ ...formData, recipe: newRecipe });
   };
 
+  const buildGlazeFromImportedRecipe = (importedRecipe: GlazyRecipeImport, originalUrl: string): Partial<Glaze> => {
+    const notes = [
+      `Fórmula fuente cargada desde Glazy: ${originalUrl}`,
+      `ID Glazy: ${importedRecipe.id}`,
+      importedRecipe.surface ? `Superficie: ${importedRecipe.surface}` : '',
+      importedRecipe.transparency ? `Transparencia: ${importedRecipe.transparency}` : '',
+      importedRecipe.country ? `País de referencia: ${importedRecipe.country}` : '',
+      importedRecipe.subtype ? `Tipo: ${importedRecipe.subtype}` : '',
+      importedRecipe.description ? `Descripción: ${importedRecipe.description}` : ''
+    ].filter(Boolean);
+
+    return {
+      name: importedRecipe.name,
+      code: `GLAZY-${importedRecipe.id}`,
+      finish: mapGlazySurface(importedRecipe.surface),
+      color: inferGlazyColor(importedRecipe),
+      texture: inferGlazyTexture(importedRecipe),
+      usage: ['Decorativo'],
+      applicationMethod: [],
+      chemicalFamily: 'Borosilicato',
+      status: 'draft',
+      temperature: importedRecipe.cone ? `Cono Orton ${importedRecipe.cone}` : '',
+      atmosphere: mapAtmosphere(importedRecipe.atmospheres),
+      clayBody: 'Gres / Porcelana',
+      firingType: '',
+      mainImage: importedRecipe.mainImage || '',
+      gallery: importedRecipe.gallery || [],
+      observations: notes.join('\n'),
+      recipe: {
+        base: importedRecipe.base,
+        additional: importedRecipe.additional,
+        totalBase: importedRecipe.totalBase || 100
+      }
+    };
+  };
+
+  const getAvailableCode = async (baseCode: string) => {
+    for (let index = 0; index <= 99; index += 1) {
+      const candidate = index === 0 ? baseCode : `${baseCode}-${index + 1}`;
+      const snapshot = await getDocs(query(collection(db, 'glazes'), where('code', '==', candidate)));
+
+      if (snapshot.empty) {
+        return candidate;
+      }
+    }
+
+    return `${baseCode}-${Date.now().toString().slice(-6)}`;
+  };
+
+  const loadSourceFormula = async () => {
+    setSourceLoading(true);
+    setSourceError('');
+
+    try {
+      let importedRecipe: GlazyRecipeImport;
+      try {
+        importedRecipe = await fetchGlazyRecipeFromApi(sourceUrl);
+      } catch {
+        importedRecipe = await fetchGlazyRecipeFromPublicData(sourceUrl);
+      }
+
+      const importedGlaze = buildGlazeFromImportedRecipe(importedRecipe, sourceUrl);
+
+      setCodeManuallyEdited(true);
+      setCalcMode('grams');
+      setTargetWeight(importedRecipe.totalBase || 100);
+      setFormData({
+        ...formData,
+        ...importedGlaze,
+        status: mapGlazyStatus(importedRecipe.state),
+        clayBody: formData.clayBody || importedGlaze.clayBody
+      });
+    } catch (error) {
+      setSourceError(error instanceof Error ? error.message : 'No pude cargar esa fórmula fuente.');
+    } finally {
+      setSourceLoading(false);
+    }
+  };
+
+  const extractGlazyUrlsFromWorkbook = (workbook: XLSX.WorkBook) => {
+    const urls = new Set<string>();
+    const urlPattern = /https?:\/\/(?:www\.)?glazy\.org\/recipes\/\d+/gi;
+
+    workbook.SheetNames.forEach((sheetName) => {
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], {
+        header: 1,
+        raw: false,
+        blankrows: false
+      });
+
+      rows.flat().forEach((value) => {
+        if (typeof value !== 'string') return;
+        const matches = value.match(urlPattern);
+        matches?.forEach((url) => urls.add(url));
+      });
+    });
+
+    return Array.from(urls);
+  };
+
+  const handleBulkSourceImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) return;
+
+    setBulkImporting(true);
+    setBulkImportMessage('Leyendo Excel...');
+    setSourceError('');
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const urls = extractGlazyUrlsFromWorkbook(workbook);
+
+      if (urls.length === 0) {
+        setBulkImportMessage('');
+        setSourceError('No encontré URLs de Glazy en el Excel.');
+        return;
+      }
+
+      let created = 0;
+      const failed: string[] = [];
+
+      for (const url of urls) {
+        setBulkImportMessage(`Importando ${created + failed.length + 1} de ${urls.length}...`);
+
+        try {
+          let importedRecipe: GlazyRecipeImport;
+          try {
+            importedRecipe = await fetchGlazyRecipeFromApi(url);
+          } catch {
+            importedRecipe = await fetchGlazyRecipeFromPublicData(url);
+          }
+
+          const importedGlaze = buildGlazeFromImportedRecipe(importedRecipe, url);
+          const code = await getAvailableCode(importedGlaze.code || `GLAZY-${importedRecipe.id}`);
+
+          await addDoc(collection(db, 'glazes'), {
+            ...importedGlaze,
+            code,
+            status: 'draft',
+            authorId: auth.currentUser?.uid,
+            authorName: auth.currentUser?.displayName || 'Anónimo',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+
+          created += 1;
+        } catch {
+          failed.push(url);
+        }
+      }
+
+      setBulkImportMessage(`Importación terminada: ${created} fichas borrador creadas${failed.length ? `, ${failed.length} fallidas` : ''}.`);
+    } catch (error) {
+      setSourceError(error instanceof Error ? error.message : 'No pude leer ese Excel.');
+      setBulkImportMessage('');
+    } finally {
+      setBulkImporting(false);
+    }
+  };
+
   const getAmountInputValue = (amount: number) => (amount === 0 ? '' : amount);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, targetIdx?: number) => {
@@ -363,6 +811,57 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
     }
   };
 
+  const getAvailableDuplicateCode = async () => {
+    const baseCode = (formData.code || 'FICHA').replace(/-COPIA(?:-\d+)?$/, '');
+
+    for (let index = 1; index <= 99; index += 1) {
+      const candidate = index === 1 ? `${baseCode}-COPIA` : `${baseCode}-COPIA-${index}`;
+      const snapshot = await getDocs(query(collection(db, 'glazes'), where('code', '==', candidate)));
+
+      if (snapshot.empty) {
+        return candidate;
+      }
+    }
+
+    return `${baseCode}-COPIA-${Date.now().toString().slice(-6)}`;
+  };
+
+  const handleDuplicate = async () => {
+    if (!glazeId || !formData.name) return;
+
+    setDuplicating(true);
+    try {
+      const duplicateCode = await getAvailableDuplicateCode();
+      const recipe = formData.recipe
+        ? syncRecipeTotals({
+            ...formData.recipe,
+            base: formData.recipe.base.map(item => ({ ...item })),
+            additional: formData.recipe.additional.map(item => ({ ...item })),
+          })
+        : formData.recipe;
+
+      await addDoc(collection(db, 'glazes'), {
+        ...formData,
+        name: `${formData.name} (Copia)`,
+        code: duplicateCode,
+        gallery: [...(formData.gallery || [])],
+        recipe,
+        status: 'draft',
+        authorId: auth.currentUser?.uid,
+        authorName: auth.currentUser?.displayName || 'Anónimo',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      alert('Ficha duplicada como borrador. Puedes encontrarla en Borrador pruebas.');
+      onSuccess();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'glazes');
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (codeDuplicate) return;
@@ -405,7 +904,58 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
           <h3 className="text-2xl font-semibold tracking-tight">{glazeId ? 'Editar Esmalte' : 'Nueva Ficha Técnica'}</h3>
           <p className="text-sm text-[#636E72]">Completa los datos técnicos del laboratorio.</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap justify-end gap-3">
+          <div className="flex min-w-[280px] flex-1 flex-col gap-2 sm:max-w-[520px]">
+            <div className="flex overflow-hidden rounded-xl border border-red-200 bg-white shadow-sm">
+              <input
+                type="url"
+                value={sourceUrl}
+                onChange={(event) => {
+                  setSourceUrl(event.target.value);
+                  setSourceError('');
+                }}
+                placeholder="URL de fórmula Glazy..."
+                className="min-w-0 flex-1 px-4 py-2.5 text-sm outline-none"
+              />
+              <button
+                type="button"
+                onClick={loadSourceFormula}
+                disabled={sourceLoading}
+                className="flex shrink-0 items-center gap-2 bg-red-600 px-5 py-2.5 text-sm font-bold uppercase tracking-wide text-white transition-all hover:bg-red-700 disabled:opacity-70"
+              >
+                {sourceLoading ? <Spinner className="h-4 w-4 animate-spin" /> : <FileInput size={18} />}
+                Cargar fórmula fuente
+              </button>
+            </div>
+            {sourceError && (
+              <p className="text-xs font-medium text-red-600">{sourceError}</p>
+            )}
+            {bulkImportMessage && (
+              <p className="text-xs font-medium text-[#636E72]">{bulkImportMessage}</p>
+            )}
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#E4E4E2] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-[#2D3436] transition-all hover:border-[#2D3436] hover:bg-[#F7F7F5]">
+              {bulkImporting ? <Spinner className="h-4 w-4 animate-spin" /> : <Upload size={16} />}
+              Cargar Excel con URLs
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv,.tsv"
+                className="hidden"
+                disabled={bulkImporting}
+                onChange={handleBulkSourceImport}
+              />
+            </label>
+          </div>
+          {glazeId && (
+            <button
+              type="button"
+              onClick={handleDuplicate}
+              disabled={duplicating || loading}
+              className="flex items-center gap-2 rounded-xl border border-[#E4E4E2] bg-white px-6 py-2.5 text-sm font-medium text-[#2D3436] transition-all hover:border-[#2D3436] hover:bg-[#F7F7F5] disabled:opacity-50"
+            >
+              {duplicating ? <Spinner className="h-4 w-4 animate-spin" /> : <Copy size={18} />}
+              Duplicar Ficha
+            </button>
+          )}
           {glazeId && (
             <button 
               type="button" 

@@ -13,6 +13,7 @@ import {
   LogOut, 
   Search, 
   Filter, 
+  FileClock,
   ChevronRight,
   Menu,
   X,
@@ -41,10 +42,15 @@ const FILTER_OPTIONS = {
   finishes: ['Brillante', 'Mate', 'Satinado', 'Metálico', 'Opaco', 'Translúcido', 'Transparente', 'Cristalino', 'Texturizado'],
   textures: ['Liso', 'Sedoso', 'Rugoso', 'Arenoso', 'Moteado', 'Craquelado', 'Lava / volcánico', 'Piel de naranja', 'Escurrido controlado'],
   families: ['Borosilicato', 'Feldespático', 'Litio', 'Zinc', 'Magnesio', 'Cenizas', 'Alta alúmina', 'Baja expansión'],
-  statuses: [{ value: 'published', label: 'Validado / Publicado' }, { value: 'pending', label: 'En Pruebas' }, { value: 'draft', label: 'Borrador' }]
+  statuses: [
+    { value: 'published', label: 'Publicado' },
+    { value: 'validated', label: 'Validado' },
+    { value: 'pending', label: 'En Pruebas' },
+    { value: 'draft', label: 'Borrador' }
+  ]
 };
 
-type View = 'dashboard' | 'repository' | 'create' | 'detail' | 'admin' | 'settings' | 'inventory-alerts';
+type View = 'dashboard' | 'repository' | 'draft-tests' | 'create' | 'detail' | 'admin' | 'settings' | 'inventory-alerts';
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -248,6 +254,7 @@ export default function App() {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'repository', label: 'Repositorio', icon: Database },
+    { id: 'draft-tests', label: 'Borrador pruebas', icon: FileClock },
     { id: 'create', label: 'Nueva Ficha', icon: PlusCircle },
     { id: 'admin', label: 'Administración', icon: Users, roles: ['admin'] as UserRole[] },
     { id: 'settings', label: 'Inventario', icon: Settings },
@@ -494,6 +501,17 @@ export default function App() {
                 <GlazeList 
                   searchQuery={searchQuery}
                   activeFilters={activeFilters}
+                  statusScope={['validated', 'published']}
+                  profile={profile}
+                  onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }} 
+                  onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}
+                />
+              )}
+              {currentView === 'draft-tests' && (
+                <GlazeList 
+                  searchQuery={searchQuery}
+                  activeFilters={activeFilters}
+                  statusScope={['draft', 'pending']}
                   profile={profile}
                   onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }} 
                   onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { Glaze, UserProfile } from '../types';
+import { Glaze, GlazeStatus, UserProfile } from '../types';
 import { STATUS_LABELS } from '../constants';
 import { generateBulkPDF } from '../lib/pdfUtils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -18,6 +18,7 @@ const FILTER_OPTIONS = {
 interface GlazeListProps {
   searchQuery?: string;
   activeFilters?: any;
+  statusScope?: GlazeStatus[];
   highlightInventoryAlerts?: boolean;
   profile?: UserProfile | null;
   onSelect: (id: string) => void;
@@ -27,6 +28,7 @@ interface GlazeListProps {
 export default function GlazeList({
   searchQuery = '',
   activeFilters = {},
+  statusScope,
   highlightInventoryAlerts = false,
   profile = null,
   onSelect,
@@ -79,6 +81,8 @@ export default function GlazeList({
     if (filterFinish && glaze.finish !== filterFinish) return false;
     if (filterTexture && glaze.texture !== filterTexture) return false;
     if (filterUsage && (!glaze.usage || !glaze.usage.includes(filterUsage))) return false;
+
+    if (statusScope && !statusScope.includes(glaze.status)) return false;
 
     if (activeFilters.color && glaze.color !== activeFilters.color) return false;
     if (activeFilters.finish && glaze.finish !== activeFilters.finish) return false;
