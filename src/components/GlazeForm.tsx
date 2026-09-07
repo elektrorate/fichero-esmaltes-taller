@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { db, auth, OperationType, handleFirestoreError } from '../lib/firebase';
 import { doc, getDoc, setDoc, addDoc, deleteDoc, collection, serverTimestamp, query, orderBy, limit, onSnapshot, where, getDocs } from 'firebase/firestore';
 import { Glaze, GlazeCopy, RecipeItem, GlazeStatus } from '../types';
-import { STATUS_LABELS } from '../constants';
+import { STATUS_LABELS, ATMOSPHERE_OPTIONS } from '../constants';
 import GlazeTechModules from './GlazeTechModules';
 import { motion } from 'motion/react';
 import { Save, Plus, Trash2, Calculator, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload, FileInput, Copy } from 'lucide-react';
@@ -179,6 +179,390 @@ const mapAtmosphere = (atmospheres: string[]) => {
   if (first.includes('neutral')) return 'Neutra';
   if (first.includes('oxidation')) return 'Oxidación';
   return 'Oxidación';
+};
+
+const normalizeExcelHeader = (value: unknown) => {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[áàâä]/g, 'a')
+    .replace(/[éèêë]/g, 'e')
+    .replace(/[íìîï]/g, 'i')
+    .replace(/[óòôö]/g, 'o')
+    .replace(/[úùûü]/g, 'u')
+    .replace(/ñ/g, 'n')
+    .replace(/[°º]/g, ' ')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .split(' ')
+    .filter(token => token !== 'c' && token !== 'grados' && token.length > 0)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const HEADER_ALIASES: Record<string, string[]> = {
+  name: ['nombre', 'nombre del esmalte', 'nombre esmalte', 'esmalte', 'nombre de la ficha', 'ficha'],
+  code: ['n', 'numero', 'numero de ficha', 'n de ficha', 'n ficha', 'codigo', 'codigo de ficha', 'codigo ficha', 'id', 'identificador'],
+  finish: ['acabado', 'terminacion', 'superficie', 'brillo', 'acabado superficial'],
+  color: ['color'],
+  texture: ['textura'],
+  usage: ['uso', 'usos', 'uso de la pieza', 'uso funcional', 'destino'],
+  applicationMethod: ['tecnica', 'tecnica de aplicacion', 'aplicacion', 'metodo de aplicacion'],
+  chemicalFamily: ['familia', 'familia quimica', 'base quimica'],
+  observations: ['observaciones', 'notas', 'descripcion', 'descripcion del esmalte', 'comentarios', 'anotaciones'],
+  temperature: ['temperatura', 't', 'temp', 'temperatura de coccion', 'temp coccion', 'temperatura de cocido', 'temp cocido'],
+  cone: ['cono', 'cono orton'],
+  clayBody: ['arcilla', 'pasta', 'cuerpo', 'cuerpo arcilloso', 'pasta arcillosa', 'tipo de arcilla', 'tipo de pasta', 'pasta ceramica'],
+  firingType: ['tipo de coccion', 'coccion', 'tecnica de coccion', 'horno'],
+  atmosphere: ['atmosfera'],
+  total: ['total', 'peso total', 'total base', 'base total'],
+  glazyUrl: ['url', 'link', 'url glazy', 'link glazy', 'fuente', 'fuente glazy']
+};
+
+const BASE_MATERIAL_WORDS = ['materia prima', 'materia', 'material', 'ingrediente', 'componente', 'base'];
+const ADDITIONAL_MATERIAL_WORDS = ['aditivo', 'adicional', 'oxido', 'colorante', 'pigmento', 'tinte'];
+const AMOUNT_WORDS = ['cantidad', 'cant', 'porcentaje', 'peso', 'gramos', 'gr'];
+
+interface TableColumn {
+  index: number;
+  kind: 'text' | 'material' | 'amount' | 'packed';
+  sub: string;
+  num?: number;
+}
+
+const classifyExcelHeader = (raw: unknown): TableColumn | null => {
+  const rawText = String(raw ?? '').trim();
+
+  const percentMatch = rawText.match(/^%\s*(\d{1,2})$/);
+  if (percentMatch) {
+    return { index: 0, kind: 'amount', sub: 'base', num: parseInt(percentMatch[1], 10) };
+  }
+
+  const header = normalizeExcelHeader(raw);
+  if (!header) return null;
+
+  for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
+    if (aliases.includes(header)) {
+      return { index: 0, kind: 'text', sub: field };
+    }
+  }
+
+  const numbered = header.match(/^(.+?)\s+(\d{1,2})$/);
+  const base = numbered ? numbered[1] : null;
+  const num = numbered ? parseInt(numbered[2], 10) : null;
+
+  const isAmount = (w: string) => AMOUNT_WORDS.some(word => w === word || w.includes(word));
+  const isBaseMaterial = (w: string) => BASE_MATERIAL_WORDS.some(word => w.includes(word));
+  const isAdditionalMaterial = (w: string) => ADDITIONAL_MATERIAL_WORDS.some(word => w.includes(word));
+
+  if (numbered && num) {
+    if (isAmount(base || '')) return { index: 0, kind: 'amount', sub: 'base', num };
+    if (isBaseMaterial(base || '')) return { index: 0, kind: 'material', sub: 'base', num };
+    if (isAdditionalMaterial(base || '')) return { index: 0, kind: 'material', sub: 'additional', num };
+    return null;
+  }
+
+  if (isAmount(header)) return { index: 0, kind: 'amount', sub: 'base', num: 1 };
+  if (isBaseMaterial(header)) return { index: 0, kind: 'material', sub: 'base', num: 1 };
+  if (isAdditionalMaterial(header)) return { index: 0, kind: 'material', sub: 'additional', num: 1 };
+
+  if (header === 'materias' || header === 'receta' || header === 'materias primas' || header === 'formula') {
+    return { index: 0, kind: 'packed', sub: 'base' };
+  }
+  if (header === 'aditivos' || header === 'oxidos' || header === 'adicionales') {
+    return { index: 0, kind: 'packed', sub: 'additional' };
+  }
+
+  return null;
+};
+
+const parseExcelAmount = (value: unknown): number => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (value === null || value === undefined) return 0;
+  let text = String(value).trim();
+  if (!text) return 0;
+
+  if (text.includes(',') && text.includes('.')) {
+    text = text.replace(/\./g, '').replace(',', '.');
+  } else if (text.includes(',')) {
+    text = text.replace(',', '.');
+  }
+
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  return match ? (parseFloat(match[0]) || 0) : 0;
+};
+
+const splitListValue = (value: string) =>
+  value
+    .split(/[,;|/]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+
+const parsePackedMaterias = (text: string): RecipeItem[] => {
+  const items: RecipeItem[] = [];
+  text.split(/\s*\|\s*|\n/).forEach(part => {
+    const clean = part.trim().replace(/:$/, '');
+    if (!clean) return;
+
+    if (clean.includes(',')) {
+      const lastComma = clean.lastIndexOf(',');
+      const rightPart = clean.slice(lastComma + 1).trim().replace(/(?:g|gr|grm|kg)\.?\s*$/i, '');
+      if (/^(?:-?\d+(?:[.,]\d+)?)$/.test(rightPart)) {
+        const material = clean.slice(0, lastComma).trim();
+        if (material) {
+          items.push({ material, amount: parseExcelAmount(rightPart) });
+          return;
+        }
+      }
+    }
+
+    const match = clean.match(/^(.*?)\s*[:=]?\s*(-?\d+(?:[.,]\d+)?)\s*(?:g|gr|grm|kg|gr\.|g\.)\s*$/)
+      || clean.match(/^(.*?)\s*[:=]?\s*(-?\d+(?:[.,]\d+)?)\s*%?\s*$/);
+    if (match && match[1].trim()) {
+      items.push({ material: match[1].trim().replace(/,$/, ''), amount: parseExcelAmount(match[2]) });
+    } else if (match) {
+      items.push({ material: clean, amount: parseExcelAmount(match[2]) });
+    } else {
+      items.push({ material: clean, amount: 0 });
+    }
+  });
+  return items;
+};
+
+const mapTableValue = (field: string, raw: unknown): string => {
+  const value = String(raw ?? '').trim();
+  if (!value) return '';
+  const normalized = normalizeExcelHeader(value);
+
+  const matchFirst = (map: Array<[string[], string]>) => {
+    return map.find(([keywords]) => keywords.some(keyword => normalized.includes(keyword)))?.[1] || value;
+  };
+
+  switch (field) {
+    case 'color':
+      return matchFirst([
+        [['anaranjado', 'naranja'], 'Naranja'],
+        [['terracota', 'tierra'], 'Tierra / terracota'],
+        [['crema', 'beige', 'marfil'], 'Crema / beige'],
+        [['purpura', 'lila', 'violeta'], 'Púrpura'],
+        [['transparente'], 'Transparente'],
+        [['marron', 'cafe', 'chocolate', 'hierro'], 'Marrón'],
+        [['amarillo'], 'Amarillo'],
+        [['cobalto', 'azul'], 'Azul'],
+        [['blanco'], 'Blanco'],
+        [['negro'], 'Negro'],
+        [['verde'], 'Verde'],
+        [['rojo'], 'Rojo'],
+        [['gris'], 'Gris']
+      ]);
+    case 'finish':
+      return matchFirst([
+        [['semi brillante', 'semi'], 'Semi-brillante'],
+        [['satin'], 'Satinado'],
+        [['transluc'], 'Translúcido'],
+        [['cristalin', 'cristal'], 'Cristalino'],
+        [['motead', 'speck'], 'Moteado'],
+        [['textur'], 'Texturizado'],
+        [['reactiv'], 'Reactivo'],
+        [['opac'], 'Opaco'],
+        [['mate'], 'Mate'],
+        [['brill', 'lustroso', 'gloss'], 'Brillante']
+      ]);
+    case 'texture':
+      return matchFirst([
+        [['piel de naranja'], 'Piel de naranja'],
+        [['lava', 'volcan'], 'Lava / volcánico'],
+        [['craquel'], 'Craquelado'],
+        [['escurrido'], 'Escurrido controlado'],
+        [['motead', 'speck', 'cristal'], 'Moteado'],
+        [['sedoso'], 'Sedoso'],
+        [['arenoso'], 'Arenoso'],
+        [['rugoso', 'rustic'], 'Rugoso'],
+        [['liso'], 'Liso']
+      ]);
+    case 'usage':
+      if (['vajilla', 'aliment', 'food', 'cocina', 'comida'].some(kw => normalized.includes(kw))) {
+        return 'Apto para vajilla / food safe';
+      }
+      if (normalized.includes('decor')) return 'Decorativo';
+      return value;
+    case 'applicationMethod':
+      return matchFirst([
+        [['inmersion', 'inmersio'], 'Inmersión'],
+        [['aerografo', 'airbrush'], 'Aerógrafo'],
+        [['pulveriz', 'spray'], 'Pulverizado'],
+        [['capa unica', 'una capa'], 'Capa única'],
+        [['multicapa', 'multi'], 'Multicapa'],
+        [['pincel'], 'Pincel'],
+        [['vertid'], 'Vertido'],
+        [['otro', 'otra'], 'Otro']
+      ]);
+    case 'atmosphere':
+      if (normalized.includes('oxid')) return 'Oxidación';
+      if (normalized.includes('reduct')) return 'Reducción';
+      if (normalized.includes('neutral') || normalized.includes('neutra')) return 'Neutra';
+      return ATMOSPHERE_OPTIONS.includes(value) ? value : 'Otra';
+    case 'chemicalFamily':
+      return matchFirst([
+        [['borosilic'], 'Borosilicato'],
+        [['feldespat'], 'Feldespático'],
+        [['ceniz'], 'Cenizas'],
+        [['alta alumina', 'alumina'], 'Alta alúmina'],
+        [['baja expansion'], 'Baja expansión'],
+        [['magnesio'], 'Magnesio'],
+        [['zinc'], 'Zinc'],
+        [['litio', 'espodumena', 'petalita'], 'Litio']
+      ]);
+    default:
+      return value;
+  }
+};
+
+const buildGlazeFromTableRow = (row: unknown[], columns: TableColumn[], sheetName: string): Partial<Glaze> | null => {
+  const getText = (fields: string[]): string => {
+    const col = columns.find(c => c.kind === 'text' && fields.includes(c.sub));
+    return col ? String(row[col.index] ?? '').trim() : '';
+  };
+
+  const name = getText(['name']);
+  if (!name) return null;
+  if (/^(total|subtotal|suma|resumen)\b/i.test(name.trim())) return null;
+
+  let base: RecipeItem[] = [];
+  let additional: RecipeItem[] = [];
+  const usedAmountIndexes = new Set<number>();
+
+  columns
+    .filter(c => c.kind === 'material')
+    .forEach(col => {
+      const raw = String(row[col.index] ?? '').trim();
+      if (!raw) return;
+
+      if (raw.includes('|') || raw.includes('\n') || /[,;]\s*\d/.test(raw)) {
+        const items = parsePackedMaterias(raw);
+        items.forEach(item => {
+          if (col.sub === 'base') base.push(item);
+          else additional.push(item);
+        });
+        return;
+      }
+
+      const amountCol = columns.find(c => c.kind === 'amount' && c.num === col.num && c.sub === col.sub && !usedAmountIndexes.has(c.index))
+        || columns.find(c => c.kind === 'amount' && c.num === col.num && !usedAmountIndexes.has(c.index));
+      if (amountCol) usedAmountIndexes.add(amountCol.index);
+      const amount = amountCol ? parseExcelAmount(row[amountCol.index]) : 0;
+      const item: RecipeItem = { material: raw, amount };
+      if (col.sub === 'base') base.push(item);
+      else additional.push(item);
+    });
+
+  columns
+    .filter(c => c.kind === 'packed')
+    .forEach(col => {
+      const rawText = String(row[col.index] ?? '').trim();
+      if (!rawText) return;
+      const items = parsePackedMaterias(rawText);
+      if (col.sub === 'base') base = base.concat(items);
+      else additional = additional.concat(items);
+    });
+
+  const totalCol = columns.find(c => c.kind === 'text' && c.sub === 'total');
+  const totalBase = totalCol
+    ? parseExcelAmount(row[totalCol.index])
+    : base.reduce((acc, item) => acc + (Number(item.amount) || 0), 0);
+
+  const temperature = getText(['temperature']);
+  const cone = getText(['cone']);
+
+  return {
+    name,
+    code: getText(['code']) || '',
+    finish: mapTableValue('finish', getText(['finish'])),
+    color: mapTableValue('color', getText(['color'])),
+    texture: mapTableValue('texture', getText(['texture'])),
+    usage: splitListValue(getText(['usage'])).map(value => mapTableValue('usage', value)).filter(Boolean),
+    applicationMethod: splitListValue(getText(['applicationMethod'])).map(value => mapTableValue('applicationMethod', value)).filter(Boolean),
+    chemicalFamily: mapTableValue('chemicalFamily', getText(['chemicalFamily'])) || 'Borosilicato',
+    temperature: temperature || (cone ? `Cono Orton ${cone}` : ''),
+    clayBody: getText(['clayBody']) || 'Gres / Porcelana',
+    firingType: getText(['firingType']),
+    atmosphere: mapTableValue('atmosphere', getText(['atmosphere'])) || '',
+    observations: [getText(['observations']), `Importada desde tabla Excel (hoja: ${sheetName})`].filter(Boolean).join('\n'),
+    recipe: { base, additional, totalBase },
+    status: 'draft',
+    techSpecs: cone ? { cone } : undefined
+  };
+};
+
+const parseWorkbookTables = (workbook: XLSX.WorkBook): { rows: Array<{ sheet: string; glaze: Partial<Glaze> }>; diagnostics: string[] } => {
+  const rows: Array<{ sheet: string; glaze: Partial<Glaze> }> = [];
+  const diagnostics: string[] = [];
+
+  const CORE_TEXT_SUBS = new Set(['name', 'code']);
+
+  workbook.SheetNames.forEach(sheetName => {
+    const sheet = workbook.Sheets[sheetName];
+    const rowsData = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, blankrows: true });
+
+    const hasAnyData = rowsData.some(row => (row || []).some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''));
+    if (!hasAnyData) return;
+
+    let headerIndex = -1;
+    let columns: TableColumn[] = [];
+    let fallback: { index: number; columns: TableColumn[] } | null = null;
+
+    for (let r = 0; r < rowsData.length; r += 1) {
+      const row = rowsData[r] || [];
+      const classified = row
+        .map((cell, index) => {
+          const col = classifyExcelHeader(cell);
+          return col ? { ...col, index } : null;
+        })
+        .filter((col): col is TableColumn => col !== null);
+
+      if (classified.length >= 2) {
+        headerIndex = r;
+        columns = classified;
+        break;
+      }
+      if (classified.length === 1 && (CORE_TEXT_SUBS.has(classified[0].sub) || classified[0].kind === 'material')) {
+        fallback = { index: r, columns: classified };
+      }
+    }
+
+    if (headerIndex < 0 && fallback) {
+      const hasDataBelow = rowsData
+        .slice(fallback.index + 1)
+        .some(row => (row || []).some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''));
+      if (hasDataBelow) {
+        headerIndex = fallback.index;
+        columns = fallback.columns;
+      }
+    }
+
+    if (headerIndex < 0) {
+      diagnostics.push(`Hoja '${sheetName}': no detecté un encabezado de tabla.`);
+      return;
+    }
+
+    const recognizedHeaders = columns
+      .map(col => String(rowsData[headerIndex][col.index] ?? '').trim())
+      .filter(Boolean);
+
+    let rowCount = 0;
+    for (let r = headerIndex + 1; r < rowsData.length; r += 1) {
+      const row = rowsData[r] || [];
+      if (!row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '')) continue;
+      rowCount += 1;
+      const glaze = buildGlazeFromTableRow(row, columns, sheetName);
+      if (glaze) rows.push({ sheet: sheetName, glaze });
+    }
+
+    diagnostics.push(
+      `Hoja '${sheetName}': tabla detectada (${recognizedHeaders.length} columnas: ${recognizedHeaders.join(', ') || 'sin nombres'}; ${rowCount} filas de datos).`
+    );
+  });
+
+  return { rows, diagnostics };
 };
 
 const parseYamlList = (value?: string) => {
@@ -804,19 +1188,26 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
       const urls = extractGlazyUrlsFromWorkbook(workbook);
+      const { rows: tables, diagnostics } = parseWorkbookTables(workbook);
 
-      if (urls.length === 0) {
+      const total = urls.length + tables.length;
+      if (total === 0) {
         setBulkImportMessage('');
-        setSourceError('No encontré URLs de Glazy en el Excel.');
+        setSourceError(`No leí fichas de ese archivo. ${diagnostics.join(' ')} Revisa que la tabla tenga un encabezado con columnas como Nombre, Código, Materia 1/ Cantidad 1.`);
         return;
       }
 
       let created = 0;
       const failed: string[] = [];
 
-      for (const url of urls) {
-        setBulkImportMessage(`Importando ${created + failed.length + 1} de ${urls.length}...`);
+      let progress = 0;
+      const advance = async () => {
+        progress += 1;
+        setBulkImportMessage(`Importando ${progress} de ${total}...`);
+      };
 
+      for (const url of urls) {
+        await advance();
         try {
           let importedRecipe: GlazyRecipeImport;
           try {
@@ -841,6 +1232,28 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
           created += 1;
         } catch {
           failed.push(url);
+        }
+      }
+
+      for (const { sheet, glaze: rowGlaze } of tables) {
+        await advance();
+        try {
+          const baseCode = rowGlaze.code || rowGlaze.name || `FICHA-${sheet}`;
+          const code = await getAvailableCode(baseCode);
+
+          await addDoc(collection(db, 'glazes'), {
+            ...rowGlaze,
+            code,
+            status: 'draft',
+            authorId: auth.currentUser?.uid,
+            authorName: auth.currentUser?.displayName || 'Anónimo',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+
+          created += 1;
+        } catch {
+          failed.push(rowGlaze.name || `fila de ${sheet}`);
         }
       }
 
@@ -1157,7 +1570,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
             )}
             <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#E4E4E2] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-[#2D3436] transition-all hover:border-[#2D3436] hover:bg-[#F7F7F5]">
               {bulkImporting ? <Spinner className="h-4 w-4 animate-spin" /> : <Upload size={16} />}
-              Subir archivo Excel con URLs
+Subir Excel (URLs o tablas)
               <input
                 type="file"
                 accept=".xlsx,.xls,.csv,.tsv"
