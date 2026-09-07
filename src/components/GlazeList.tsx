@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
-import { db } from '../lib/firebase';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { db, OperationType, handleFirestoreError } from '../lib/firebase';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 import { Glaze, GlazeStatus, UserProfile } from '../types';
-import { STATUS_LABELS } from '../constants';
+import { STATUS_LABELS, ORTON_CONES, matchesOrtonCone } from '../constants';
 import { generateBulkPDF } from '../lib/pdfUtils';
 import { motion, AnimatePresence } from 'motion/react';
-import { Edit2, Eye, MoreVertical, Tag, FileDown, CheckSquare, Square, Download, X, Check, Loader2, Filter, RotateCcw } from 'lucide-react';
+import { Edit2, Eye, MoreVertical, Tag, FileDown, CheckSquare, Square, Download, X, Check, Loader2, Filter, RotateCcw, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const FILTER_OPTIONS = {
@@ -39,11 +39,13 @@ export default function GlazeList({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [filterColor, setFilterColor] = useState('');
   const [filterFinish, setFilterFinish] = useState('');
   const [filterTexture, setFilterTexture] = useState('');
   const [filterUsage, setFilterUsage] = useState('');
+  const [filterTemperature, setFilterTemperature] = useState('');
 
   useEffect(() => {
     const q = query(collection(db, 'glazes'), orderBy('createdAt', 'desc'));
@@ -60,13 +62,14 @@ export default function GlazeList({
     );
   };
 
-  const hasActiveFilters = filterColor || filterFinish || filterTexture || filterUsage;
+  const hasActiveFilters = filterColor || filterFinish || filterTexture || filterUsage || filterTemperature;
 
   const clearFilters = () => {
     setFilterColor('');
     setFilterFinish('');
     setFilterTexture('');
     setFilterUsage('');
+    setFilterTemperature('');
   };
 
   const filteredGlazes = glazes.filter(glaze => {
@@ -81,12 +84,14 @@ export default function GlazeList({
     if (filterFinish && glaze.finish !== filterFinish) return false;
     if (filterTexture && glaze.texture !== filterTexture) return false;
     if (filterUsage && (!glaze.usage || !glaze.usage.includes(filterUsage))) return false;
+    if (filterTemperature && !matchesOrtonCone(glaze.temperature, filterTemperature)) return false;
 
     if (statusScope && !statusScope.includes(glaze.status)) return false;
 
     if (activeFilters.color && glaze.color !== activeFilters.color) return false;
     if (activeFilters.finish && glaze.finish !== activeFilters.finish) return false;
     if (activeFilters.texture && glaze.texture !== activeFilters.texture) return false;
+    if (activeFilters.temperature && !matchesOrtonCone(glaze.temperature, String(activeFilters.temperature))) return false;
     if (activeFilters.chemicalFamily && glaze.chemicalFamily !== activeFilters.chemicalFamily) return false;
     if (activeFilters.status && glaze.status !== activeFilters.status) return false;
 
@@ -112,6 +117,23 @@ export default function GlazeList({
       console.error('Error exporting PDF:', error);
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const targets = filteredGlazes.filter(g => selectedIds.includes(g.id!));
+    if (targets.length === 0) return;
+    const confirmed = window.confirm(`¿Eliminar ${targets.length} ficha${targets.length === 1 ? '' : 's'}? Esta acción no se puede deshacer.`);
+    if (!confirmed) return;
+    setIsDeleting(true);
+    try {
+      await Promise.all(targets.map(g => deleteDoc(doc(db, 'glazes', g.id!))));
+      setIsSelectionMode(false);
+      setSelectedIds([]);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'glazes');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -156,6 +178,28 @@ export default function GlazeList({
                   <>
                     <Download size={18} />
                     Exportar PDF ({selectedIds.length})
+                  </>
+                )}
+              </motion.button>
+            )}
+            {isSelectionMode && selectedIds.length > 0 && profile?.role === 'admin' && (
+              <motion.button
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                onClick={handleBulkDelete}
+                disabled={isDeleting}
+                className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-70"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Eliminando...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={18} />
+                    Eliminar ({selectedIds.length})
                   </>
                 )}
               </motion.button>
@@ -217,6 +261,14 @@ export default function GlazeList({
         >
           <option value="">Uso</option>
           {FILTER_OPTIONS.usages.map(u => <option key={u} value={u}>{u}</option>)}
+        </select>
+        <select
+          value={filterTemperature}
+          onChange={e => setFilterTemperature(e.target.value)}
+          className="rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-xs font-medium outline-none focus:border-[#2D3436] focus:bg-white"
+        >
+          <option value="">Temperatura (Cono)</option>
+          {ORTON_CONES.map(c => <option key={c.cone} value={c.cone}>Cono {c.cone} · {c.c150}°C</option>)}
         </select>
         {hasActiveFilters && (
           <button

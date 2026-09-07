@@ -644,7 +644,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
     const urlPattern = /https?:\/\/(?:www\.)?glazy\.org\/recipes\/\d+/gi;
 
     workbook.SheetNames.forEach((sheetName) => {
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], {
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], {
         header: 1,
         raw: false,
         blankrows: false
