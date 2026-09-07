@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db, OperationType, handleFirestoreError } from '../lib/firebase';
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Glaze, GlazeStatus, UserProfile } from '../types';
 import { STATUS_LABELS, ORTON_CONES, matchesOrtonCone } from '../constants';
 import { generateBulkPDF } from '../lib/pdfUtils';
@@ -177,13 +177,35 @@ export default function GlazeList({
   };
 
   const handleBulkDelete = async () => {
-    const targets = filteredGlazes.filter(g => selectedIds.includes(g.id!));
+    const targets = filteredGlazes.filter(g => selectedIds.includes(g.displayId));
     if (targets.length === 0) return;
     const confirmed = window.confirm(`¿Eliminar ${targets.length} ficha${targets.length === 1 ? '' : 's'}? Esta acción no se puede deshacer.`);
     if (!confirmed) return;
     setIsDeleting(true);
     try {
-      await Promise.all(targets.map(g => deleteDoc(doc(db, 'glazes', g.id!))));
+      const originalTargets = targets.filter(g => !g.isCopy);
+      const copyTargetsByParent = targets
+        .filter(g => g.isCopy && g.copyIndex !== null && !originalTargets.some(original => original.parentId === g.parentId))
+        .reduce<Record<string, number[]>>((groups, glaze) => {
+          groups[glaze.parentId] = [...(groups[glaze.parentId] || []), glaze.copyIndex as number];
+          return groups;
+        }, {});
+
+      await Promise.all(originalTargets.map(g => deleteDoc(doc(db, 'glazes', g.parentId))));
+      await Promise.all(Object.entries(copyTargetsByParent).map(async ([parentId, copyIndexes]) => {
+        const glazeRef = doc(db, 'glazes', parentId);
+        const snapshot = await getDoc(glazeRef);
+        if (!snapshot.exists()) return;
+
+        const glaze = snapshot.data() as Glaze;
+        const indexesToDelete = new Set(copyIndexes);
+        const nextCopies = (glaze.copies || []).filter((_, index) => !indexesToDelete.has(index));
+        await setDoc(glazeRef, {
+          ...glaze,
+          copies: nextCopies,
+          updatedAt: serverTimestamp(),
+        });
+      }));
       setIsSelectionMode(false);
       setSelectedIds([]);
     } catch (error) {
