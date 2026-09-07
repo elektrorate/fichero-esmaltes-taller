@@ -623,6 +623,13 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
   const getStoredCopies = () => originalData?.copies || formData.copies || [];
 
+  const getFreshOriginalData = async () => {
+    if (!glazeId) return originalData;
+    const docSnap = await getDoc(doc(db, 'glazes', glazeId));
+    if (!docSnap.exists()) return originalData;
+    return docSnap.data() as Glaze;
+  };
+
   const selectOriginal = () => {
     if (originalData) {
       setFormData(originalData);
@@ -930,14 +937,16 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
   const handleDuplicate = async () => {
     if (!glazeId || !formData.name) return;
-    const currentCopies = getStoredCopies();
-    if (currentCopies.length >= 3) {
-      alert('Esta ficha ya tiene el máximo de 3 copias internas.');
-      return;
-    }
 
     setDuplicating(true);
     try {
+      const freshOriginalData = await getFreshOriginalData();
+      const currentCopies = freshOriginalData?.copies || [];
+      if (currentCopies.length >= 3) {
+        alert('Esta ficha ya tiene el máximo de 3 copias internas.');
+        return;
+      }
+
       const nextCopyNumber = currentCopies.length + 1;
       const internalCopy = {
         ...buildCopyFromActiveForm(nextCopyNumber),
@@ -946,7 +955,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       };
       const nextCopies = [...currentCopies, internalCopy];
       const nextOriginalData = {
-        ...(originalData || formData),
+        ...(freshOriginalData || originalData || formData),
         copies: nextCopies,
       } as Glaze;
       await setDoc(doc(db, 'glazes', glazeId), {
@@ -1009,12 +1018,14 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         setOriginalData(nextOriginalData);
         setFormData({ ...savedActiveCopy, copies: nextOriginalData.copies });
       } else if (glazeId) {
+        const freshOriginalData = await getFreshOriginalData();
+        const currentCopies = freshOriginalData?.copies || originalData?.copies || [];
         const nextData = {
           ...data,
           isValidated: isRepositoryStatus(data.status),
           copies: isRepositoryStatus(data.status)
-            ? (data.copies || []).map(moveCopyToDraft)
-            : data.copies,
+            ? currentCopies.map(moveCopyToDraft)
+            : currentCopies,
         } as Glaze;
         await setDoc(doc(db, 'glazes', glazeId), nextData);
         setOriginalData(nextData);
