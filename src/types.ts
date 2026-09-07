@@ -47,6 +47,14 @@ export interface Glaze {
   updatedAt: any;
   isValidated: boolean;
   inventoryLevel?: number;
+  copies?: GlazeCopy[];
+}
+
+export interface GlazeCopy extends Omit<Glaze, 'id' | 'createdAt' | 'updatedAt' | 'copies'> {
+  copyId: string;
+  sourceCode: string;
+  createdAt: any;
+  updatedAt: any;
 }
 
 export interface Comment {

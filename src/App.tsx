@@ -58,6 +58,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [selectedGlazeId, setSelectedGlazeId] = useState<string | null>(null);
+  const [selectedCopyIndex, setSelectedCopyIndex] = useState<number | null>(null);
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 1024);
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
   
@@ -301,7 +302,10 @@ export default function App() {
               key={item.id}
               onClick={() => {
                 setCurrentView(item.id as View);
-                if (item.id === 'create') setSelectedGlazeId(null);
+                if (item.id === 'create') {
+                  setSelectedGlazeId(null);
+                  setSelectedCopyIndex(null);
+                }
               }}
               className={cn(
                 "flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-all",
@@ -503,8 +507,8 @@ export default function App() {
                   activeFilters={activeFilters}
                   statusScope={['validated', 'published']}
                   profile={profile}
-                  onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }} 
-                  onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}
+                  onSelect={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('detail'); }} 
+                  onEdit={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('create'); }}
                 />
               )}
               {currentView === 'draft-tests' && (
@@ -513,8 +517,8 @@ export default function App() {
                   activeFilters={activeFilters}
                   statusScope={['draft', 'pending']}
                   profile={profile}
-                  onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }} 
-                  onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}
+                  onSelect={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('detail'); }} 
+                  onEdit={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('create'); }}
                 />
               )}
               {currentView === 'inventory-alerts' && (
@@ -523,24 +527,26 @@ export default function App() {
                   activeFilters={activeFilters}
                   highlightInventoryAlerts
                   profile={profile}
-                  onSelect={(id) => { setSelectedGlazeId(id); setCurrentView('detail'); }}
-                  onEdit={(id) => { setSelectedGlazeId(id); setCurrentView('create'); }}
+                  onSelect={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('detail'); }}
+                  onEdit={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('create'); }}
                 />
               )}
               {currentView === 'create' && (
                 <GlazeForm 
                   glazeId={selectedGlazeId} 
+                  initialCopyIndex={selectedCopyIndex}
                   onCancel={() => setCurrentView('repository')} 
-                  onSuccess={() => setCurrentView('repository')}
-                  onDelete={() => setCurrentView('repository')}
+                  onSuccess={() => { setSelectedCopyIndex(null); setCurrentView('repository'); }}
+                  onDelete={() => { setSelectedCopyIndex(null); setCurrentView('repository'); }}
                 />
               )}
               {currentView === 'detail' && selectedGlazeId && (
                 <GlazeDetail 
                   id={selectedGlazeId} 
+                  initialCopyIndex={selectedCopyIndex}
                   profile={profile}
-                  onEdit={() => setCurrentView('create')}
-                  onBack={() => setCurrentView('repository')}
+                  onEdit={(copyIndex) => { setSelectedCopyIndex(copyIndex ?? null); setCurrentView('create'); }}
+                  onBack={() => { setSelectedCopyIndex(null); setCurrentView('repository'); }}
                 />
               )}
               {currentView === 'admin' && <AdminPanel />}

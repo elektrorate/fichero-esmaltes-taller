@@ -10,23 +10,26 @@ import { cn } from '../lib/utils';
 
 interface GlazeDetailProps {
   id: string;
+  initialCopyIndex?: number | null;
   profile?: UserProfile | null;
-  onEdit: () => void;
+  onEdit: (copyIndex?: number | null) => void;
   onBack: () => void;
 }
 
-export default function GlazeDetail({ id, profile = null, onEdit, onBack }: GlazeDetailProps) {
+export default function GlazeDetail({ id, initialCopyIndex = null, profile = null, onEdit, onBack }: GlazeDetailProps) {
   const [glaze, setGlaze] = useState<Glaze | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [loading, setLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
   const [activeImage, setActiveImage] = useState<string | null>(null);
+  const [activeCopyIndex, setActiveCopyIndex] = useState(-1);
 
   useEffect(() => {
     const unsubscribeGlaze = onSnapshot(doc(db, 'glazes', id), (doc) => {
       if (doc.exists()) {
-        setGlaze({ id: doc.id, ...doc.data() } as Glaze);
+        const nextGlaze = { id: doc.id, ...doc.data() } as Glaze;
+        setGlaze(nextGlaze);
       }
       setLoading(false);
     });
@@ -41,6 +44,11 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
       unsubscribeComments();
     };
   }, [id]);
+
+  useEffect(() => {
+    setActiveCopyIndex(initialCopyIndex ?? -1);
+    setActiveImage(null);
+  }, [id, initialCopyIndex]);
 
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,15 +81,58 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
 
   if (loading) return <div className="py-20 text-center text-[#636E72]">Cargando ficha técnica...</div>;
   if (!glaze) return <div className="py-20 text-center text-[#636E72]">Ficha no encontrada.</div>;
+  const activeCopy = activeCopyIndex >= 0 ? glaze.copies?.[activeCopyIndex] : null;
+  const visibleGlaze = activeCopy || glaze;
+  const visibleImages = [visibleGlaze.mainImage, ...(visibleGlaze.gallery || [])].filter(Boolean);
+  const isRepositoryStatus = visibleGlaze.status === 'validated' || visibleGlaze.status === 'published';
+  const showCopySelector = !isRepositoryStatus && (glaze.copies?.length || 0) > 0;
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <button onClick={onBack} className="flex items-center gap-2 text-sm font-medium text-[#636E72] hover:text-[#2D3436]">
           <ArrowLeft size={18} />
           Volver al repositorio
         </button>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {showCopySelector && (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#E4E4E2] bg-white p-2 shadow-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveCopyIndex(-1);
+                  setActiveImage(null);
+                }}
+                className={cn(
+                  "rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-all",
+                  activeCopyIndex === -1 ? "bg-[#2D3436] text-white" : "text-[#636E72] hover:bg-[#F7F7F5] hover:text-[#2D3436]"
+                )}
+              >
+                Original
+              </button>
+              {[0, 1, 2].map((index) => {
+                const copy = glaze.copies?.[index];
+                return (
+                <button
+                  key={copy?.copyId || index}
+                  type="button"
+                  disabled={!copy}
+                  onClick={() => {
+                    setActiveCopyIndex(index);
+                    setActiveImage(null);
+                  }}
+                  className={cn(
+                    "rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-all",
+                    activeCopyIndex === index ? "bg-[#8a168a] text-white" : "text-[#636E72] hover:bg-[#F7F7F5] hover:text-[#2D3436]",
+                    !copy && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-[#636E72]"
+                  )}
+                >
+                  Copia {index + 1}
+                </button>
+                );
+              })}
+            </div>
+          )}
           {profile?.role === 'admin' && (
             <button 
               onClick={handleExportPDF}
@@ -110,7 +161,7 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
           <button className="rounded-xl border border-[#E4E4E2] p-2.5 text-[#636E72] hover:bg-white">
             <Share2 size={18} />
           </button>
-          <button onClick={onEdit} className="flex items-center gap-2 rounded-xl bg-[#2D3436] px-6 py-2.5 text-sm font-medium text-white hover:bg-black">
+          <button onClick={() => onEdit(activeCopyIndex >= 0 ? activeCopyIndex : null)} className="flex items-center gap-2 rounded-xl bg-[#2D3436] px-6 py-2.5 text-sm font-medium text-white hover:bg-black">
             <Edit2 size={18} />
             Editar Ficha
           </button>
@@ -122,20 +173,20 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
         <div className="space-y-6">
           <div className="w-full overflow-hidden rounded-[32px] bg-white shadow-sm">
             <img 
-              src={activeImage || glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/800/600`} 
+              src={activeImage || visibleGlaze.mainImage || `https://picsum.photos/seed/${glaze.id}/800/600`} 
               className="w-full aspect-[8/10] object-cover transition-all duration-300" 
-              alt={glaze.name} 
+              alt={visibleGlaze.name} 
               referrerPolicy="no-referrer"
             />
-            {((glaze.mainImage ? 1 : 0) + (glaze.gallery?.length || 0)) > 1 && (
+            {visibleImages.length > 1 && (
               <div className="flex gap-3 overflow-x-auto border-t border-[#F4F4F2] p-4">
-                {[glaze.mainImage, ...(glaze.gallery || [])].filter(Boolean).map((img, idx) => (
+                {visibleImages.map((img, idx) => (
                   <button 
                     key={idx}
                     onClick={() => setActiveImage(img as string)}
                     className={cn(
                       "h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 transition-all",
-                      (activeImage || glaze.mainImage) === img ? "border-[#2D3436] opacity-100" : "border-transparent opacity-60 hover:opacity-100"
+                      (activeImage || visibleGlaze.mainImage) === img ? "border-[#2D3436] opacity-100" : "border-transparent opacity-60 hover:opacity-100"
                     )}
                   >
                     <img src={img as string} className="h-full w-full object-cover" alt="Thumbnail" referrerPolicy="no-referrer" />
@@ -151,34 +202,34 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
           <div className="rounded-[32px] bg-white p-8 shadow-sm">
             <div className="flex items-start justify-between">
               <div>
-                <h1 className="text-3xl font-semibold tracking-tight">{glaze.name}</h1>
-                <p className="mt-1 text-sm font-bold uppercase tracking-[0.2em] text-[#8a168a]">{glaze.code}</p>
+                <h1 className="text-3xl font-semibold tracking-tight">{visibleGlaze.name}</h1>
+                <p className="mt-1 text-sm font-bold uppercase tracking-[0.2em] text-[#8a168a]">{visibleGlaze.code}</p>
               </div>
               <span className={`rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-widest ${
-                glaze.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 
-                glaze.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700'
+                visibleGlaze.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 
+                visibleGlaze.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700'
               }`}>
-                {STATUS_LABELS[glaze.status]}
+                {STATUS_LABELS[visibleGlaze.status]}
               </span>
             </div>
 
             <div className="mt-7 grid grid-cols-2 gap-x-8 gap-y-5 border-t-2 border-[#8a168a]/30 pt-6 md:grid-cols-4">
               <div className="space-y-1">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Color</p>
-                <p className="text-sm font-medium">{glaze.color}</p>
+                <p className="text-sm font-medium">{visibleGlaze.color}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Acabado</p>
-                <p className="text-sm font-medium">{glaze.finish}</p>
+                <p className="text-sm font-medium">{visibleGlaze.finish}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Textura</p>
-                <p className="text-sm font-medium">{glaze.texture}</p>
+                <p className="text-sm font-medium">{visibleGlaze.texture}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Uso</p>
                 <p className="text-sm font-medium">
-                  {glaze.usage && glaze.usage.length > 0 ? glaze.usage.join(', ') : 'No especificado'}
+                  {visibleGlaze.usage && visibleGlaze.usage.length > 0 ? visibleGlaze.usage.join(', ') : 'No especificado'}
                 </p>
               </div>
             </div>
@@ -189,21 +240,21 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
                   <Thermometer size={12} className="text-[#8a168a]" />
                   <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Temperatura</p>
                 </div>
-                <p className="text-sm font-medium">{glaze.temperature || 'No especificada'}</p>
+                <p className="text-sm font-medium">{visibleGlaze.temperature || 'No especificada'}</p>
               </div>
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
                   <FlaskConical size={12} className="text-[#8a168a]" />
                   <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Atmósfera</p>
                 </div>
-                <p className="text-sm font-medium">{glaze.atmosphere || 'Oxidación'}</p>
+                <p className="text-sm font-medium">{visibleGlaze.atmosphere || 'Oxidación'}</p>
               </div>
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
                   <Tag size={12} className="text-[#8a168a]" />
                   <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Pasta</p>
                 </div>
-                <p className="text-sm font-medium">{glaze.clayBody || 'Gres / Porcelana'}</p>
+                <p className="text-sm font-medium">{visibleGlaze.clayBody || 'Gres / Porcelana'}</p>
               </div>
             </div>
 
@@ -214,7 +265,7 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
                     <User size={12} className="text-[#8a168a]" />
                     <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Autor</p>
                   </div>
-                  <p className="text-sm font-medium">{glaze.authorName}</p>
+                  <p className="text-sm font-medium">{visibleGlaze.authorName}</p>
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-1.5">
@@ -222,7 +273,7 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
                     <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Creado</p>
                   </div>
                   <p className="text-sm font-medium">
-                    {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
+                    {visibleGlaze.createdAt?.toDate ? visibleGlaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
                   </p>
                 </div>
               </div>
@@ -275,7 +326,7 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
         <div className="flex items-center justify-between border-b border-[#D5D0CC] pb-6">
           <h3 className="text-lg font-semibold tracking-tight">Fórmula Técnica</h3>
           <div className="flex gap-4 text-xs font-bold uppercase tracking-widest text-[#8a168a]">
-            <span>Base: {glaze.recipe.totalBase}g</span>
+            <span>Base: {visibleGlaze.recipe.totalBase}g</span>
           </div>
         </div>
 
@@ -290,7 +341,7 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#D5D0CC]">
-                {glaze.recipe.base.map((item, i) => (
+                {visibleGlaze.recipe.base.map((item, i) => (
                   <tr key={i}>
                     <td className="py-3 font-medium">{item.material}</td>
                     <td className="py-3 text-right font-mono">{item.amount.toFixed(1)}</td>
@@ -299,7 +350,7 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
                 <tr className="bg-[#F7F7F5]/50">
                   <td className="py-3 font-bold">Total Base</td>
                   <td className="py-3 text-right font-bold font-mono">
-                    {glaze.recipe.base.reduce((acc, i) => acc + i.amount, 0).toFixed(1)}
+                    {visibleGlaze.recipe.base.reduce((acc, i) => acc + i.amount, 0).toFixed(1)}
                   </td>
                 </tr>
               </tbody>
@@ -316,13 +367,13 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#D5D0CC]">
-                {glaze.recipe.additional.map((item, i) => (
+                {visibleGlaze.recipe.additional.map((item, i) => (
                   <tr key={i}>
                     <td className="py-3 font-medium">{item.material}</td>
                     <td className="py-3 text-right font-mono">{item.amount.toFixed(1)}</td>
                   </tr>
                 ))}
-                {glaze.recipe.additional.length === 0 && (
+                {visibleGlaze.recipe.additional.length === 0 && (
                   <tr><td colSpan={2} className="py-4 text-center text-xs text-[#8a168a]">Sin adicionales</td></tr>
                 )}
               </tbody>
@@ -335,7 +386,7 @@ export default function GlazeDetail({ id, profile = null, onEdit, onBack }: Glaz
       <div className="rounded-[32px] bg-white p-8 shadow-sm">
         <h3 className="text-lg font-semibold tracking-tight">Observaciones de Laboratorio</h3>
         <div className="mt-6 text-sm leading-relaxed text-[#636E72] whitespace-pre-wrap">
-          {glaze.observations || "Sin observaciones adicionales registradas."}
+          {visibleGlaze.observations || "Sin observaciones adicionales registradas."}
         </div>
       </div>
       </div>

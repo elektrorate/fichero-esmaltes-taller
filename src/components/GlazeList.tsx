@@ -21,9 +21,25 @@ interface GlazeListProps {
   statusScope?: GlazeStatus[];
   highlightInventoryAlerts?: boolean;
   profile?: UserProfile | null;
-  onSelect: (id: string) => void;
-  onEdit: (id: string) => void;
+  onSelect: (id: string, copyIndex?: number | null) => void;
+  onEdit: (id: string, copyIndex?: number | null) => void;
 }
+
+type DisplayGlaze = Glaze & {
+  displayId: string;
+  parentId: string;
+  copyIndex: number | null;
+  isCopy: boolean;
+};
+
+const isRepositoryStatus = (status: GlazeStatus) => status === 'validated' || status === 'published';
+
+const getSortableDate = (value: any) => {
+  if (!value) return 0;
+  if (typeof value.toDate === 'function') return value.toDate().getTime();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+};
 
 export default function GlazeList({
   searchQuery = '',
@@ -72,7 +88,32 @@ export default function GlazeList({
     setFilterTemperature('');
   };
 
-  const filteredGlazes = glazes.filter(glaze => {
+  const displayGlazes: DisplayGlaze[] = glazes.flatMap((glaze) => {
+    if (!glaze.id) return [];
+
+    const original: DisplayGlaze = {
+      ...glaze,
+      displayId: glaze.id,
+      parentId: glaze.id,
+      copyIndex: null,
+      isCopy: false,
+    };
+
+    const copies = (glaze.copies || []).map((copy, index) => ({
+      ...glaze,
+      ...copy,
+      id: glaze.id,
+      copies: glaze.copies,
+      displayId: `${glaze.id}-copy-${copy.copyId || index}`,
+      parentId: glaze.id!,
+      copyIndex: index,
+      isCopy: true,
+    } as DisplayGlaze));
+
+    return [original, ...copies];
+  });
+
+  const baseFilteredGlazes = displayGlazes.filter(glaze => {
     if (searchQuery) {
       const lowerQuery = searchQuery.toLowerCase();
       const matchesName = glaze.name.toLowerCase().includes(lowerQuery);
@@ -97,6 +138,21 @@ export default function GlazeList({
 
     return true;
   });
+
+  const filteredGlazes = statusScope?.some(isRepositoryStatus)
+    ? Object.values(
+        baseFilteredGlazes.reduce<Record<string, DisplayGlaze>>((officialByParent, glaze) => {
+          if (!isRepositoryStatus(glaze.status)) return officialByParent;
+          const current = officialByParent[glaze.parentId];
+          const currentDate = getSortableDate(current?.updatedAt || current?.createdAt);
+          const nextDate = getSortableDate(glaze.updatedAt || glaze.createdAt);
+          if (!current || nextDate >= currentDate) {
+            officialByParent[glaze.parentId] = glaze;
+          }
+          return officialByParent;
+        }, {})
+      )
+    : baseFilteredGlazes;
   const inventoryAlertThreshold = 25;
   const alertGlazes = filteredGlazes.filter(
     glaze => glaze.inventoryLevel !== undefined && glaze.inventoryLevel <= inventoryAlertThreshold
@@ -106,7 +162,7 @@ export default function GlazeList({
   );
 
   const handleBulkExport = async () => {
-    const selectedGlazes = filteredGlazes.filter(g => selectedIds.includes(g.id!));
+    const selectedGlazes = filteredGlazes.filter(g => selectedIds.includes(g.displayId));
     if (selectedGlazes.length === 0) return;
     setIsExporting(true);
     try {
@@ -210,7 +266,7 @@ export default function GlazeList({
         {isSelectionMode && (
           <div className="flex gap-3">
             <button 
-              onClick={() => setSelectedIds(filteredGlazes.map(g => g.id!))}
+              onClick={() => setSelectedIds(filteredGlazes.map(g => g.displayId))}
               className="text-xs font-bold uppercase tracking-widest text-[#8a168a] hover:text-[#2D3436]"
             >
               Seleccionar Todos
@@ -308,21 +364,21 @@ export default function GlazeList({
               {alertGlazes.length > 0 && (
                 <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
                   {alertGlazes.map((glaze, i) => (
-                    <div key={glaze.id} className="rounded-[24px] ring-1 ring-red-100">
+                    <div key={glaze.displayId} className="rounded-[24px] ring-1 ring-red-100">
                       <motion.div
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ delay: i * 0.05 }}
-                        onClick={() => isSelectionMode && toggleSelection(glaze.id!)}
+                        onClick={() => isSelectionMode && toggleSelection(glaze.displayId)}
                         className={cn(
                           "group relative overflow-hidden rounded-[24px] bg-white shadow-sm transition-all hover:shadow-md",
                           isSelectionMode && "cursor-pointer ring-2 transition-all",
-                          isSelectionMode && selectedIds.includes(glaze.id!) ? "ring-[#2D3436]" : "ring-transparent"
+                          isSelectionMode && selectedIds.includes(glaze.displayId) ? "ring-[#2D3436]" : "ring-transparent"
                         )}
                       >
                         {isSelectionMode && (
                           <div className="absolute left-4 top-4 z-10">
-                            {selectedIds.includes(glaze.id!) ? (
+                            {selectedIds.includes(glaze.displayId) ? (
                               <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#2D3436] text-white shadow-lg">
                                 <Check size={14} />
                               </div>
@@ -333,7 +389,7 @@ export default function GlazeList({
                         )}
                         <div className="aspect-[4/3] overflow-hidden">
                           <img
-                            src={glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/400/300`}
+                            src={glaze.mainImage || `https://picsum.photos/seed/${glaze.displayId}/400/300`}
                             className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
                             alt={glaze.name}
                             referrerPolicy="no-referrer"
@@ -342,10 +398,10 @@ export default function GlazeList({
                           {!isSelectionMode && (
                             <div className="absolute bottom-4 left-4 right-4 flex translate-y-4 items-center justify-between opacity-0 transition-all group-hover:translate-y-0 group-hover:opacity-100">
                               <div className="flex gap-2">
-                                <button onClick={(e) => { e.stopPropagation(); onSelect(glaze.id!); }} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md hover:bg-white/40">
+                                <button onClick={(e) => { e.stopPropagation(); onSelect(glaze.parentId, glaze.copyIndex); }} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md hover:bg-white/40">
                                   <Eye size={18} />
                                 </button>
-                                <button onClick={(e) => { e.stopPropagation(); onEdit(glaze.id!); }} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md hover:bg-white/40">
+                                <button onClick={(e) => { e.stopPropagation(); onEdit(glaze.parentId, glaze.copyIndex); }} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md hover:bg-white/40">
                                   <Edit2 size={18} />
                                 </button>
                               </div>
@@ -360,6 +416,11 @@ export default function GlazeList({
                             <div>
                               <h4 className="text-lg font-semibold tracking-tight">{glaze.name}</h4>
                               <p className="text-xs font-medium text-[#8a168a] uppercase tracking-widest mt-0.5">{glaze.code}</p>
+                              {glaze.isCopy && (
+                                <span className="mt-2 inline-flex rounded-full bg-[#8a168a]/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">
+                                  Copia {Number(glaze.copyIndex) + 1}
+                                </span>
+                              )}
                             </div>
                             {!isSelectionMode && (
                               <div className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[#F7F7F5]">
@@ -402,20 +463,20 @@ export default function GlazeList({
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
               {(highlightInventoryAlerts ? regularGlazes : filteredGlazes).map((glaze, i) => (
           <motion.div
-            key={glaze.id}
+            key={glaze.displayId}
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: i * 0.05 }}
-            onClick={() => isSelectionMode && toggleSelection(glaze.id!)}
+            onClick={() => isSelectionMode && toggleSelection(glaze.displayId)}
             className={cn(
               "group relative overflow-hidden rounded-[24px] bg-white shadow-sm transition-all hover:shadow-md",
               isSelectionMode && "cursor-pointer ring-2 transition-all",
-              isSelectionMode && selectedIds.includes(glaze.id!) ? "ring-[#2D3436]" : "ring-transparent"
+              isSelectionMode && selectedIds.includes(glaze.displayId) ? "ring-[#2D3436]" : "ring-transparent"
             )}
           >
             {isSelectionMode && (
               <div className="absolute left-4 top-4 z-10">
-                {selectedIds.includes(glaze.id!) ? (
+                {selectedIds.includes(glaze.displayId) ? (
                   <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#2D3436] text-white shadow-lg">
                     <Check size={14} />
                   </div>
@@ -428,13 +489,13 @@ export default function GlazeList({
             <div
               onClick={() => {
                 if (!isSelectionMode) {
-                  onSelect(glaze.id!);
+                  onSelect(glaze.parentId, glaze.copyIndex);
                 }
               }}
               className={cn("aspect-[4/3] overflow-hidden", !isSelectionMode && "cursor-pointer")}
             >
               <img 
-                src={glaze.mainImage || `https://picsum.photos/seed/${glaze.id}/400/300`} 
+                src={glaze.mainImage || `https://picsum.photos/seed/${glaze.displayId}/400/300`} 
                 className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110" 
                 alt={glaze.name} 
                 referrerPolicy="no-referrer"
@@ -445,13 +506,13 @@ export default function GlazeList({
                 <div className="absolute bottom-4 left-4 right-4 flex translate-y-4 items-center justify-between opacity-0 transition-all group-hover:translate-y-0 group-hover:opacity-100">
                   <div className="flex gap-2">
                     <button 
-                      onClick={(e) => { e.stopPropagation(); onSelect(glaze.id!); }}
+                      onClick={(e) => { e.stopPropagation(); onSelect(glaze.parentId, glaze.copyIndex); }}
                       className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md hover:bg-white/40"
                     >
                       <Eye size={18} />
                     </button>
                     <button 
-                      onClick={(e) => { e.stopPropagation(); onEdit(glaze.id!); }}
+                      onClick={(e) => { e.stopPropagation(); onEdit(glaze.parentId, glaze.copyIndex); }}
                       className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md hover:bg-white/40"
                     >
                       <Edit2 size={18} />
@@ -469,6 +530,11 @@ export default function GlazeList({
                 <div>
                   <h4 className="text-lg font-semibold tracking-tight">{glaze.name}</h4>
                   <p className="text-xs font-medium text-[#8a168a] uppercase tracking-widest mt-0.5">{glaze.code}</p>
+                  {glaze.isCopy && (
+                    <span className="mt-2 inline-flex rounded-full bg-[#8a168a]/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">
+                      Copia {Number(glaze.copyIndex) + 1}
+                    </span>
+                  )}
                 </div>
                 {!isSelectionMode && (
                   <div className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[#F7F7F5]">

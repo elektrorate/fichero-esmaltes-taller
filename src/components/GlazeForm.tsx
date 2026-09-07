@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { db, auth, OperationType, handleFirestoreError } from '../lib/firebase';
 import { doc, getDoc, setDoc, addDoc, deleteDoc, collection, serverTimestamp, query, orderBy, limit, onSnapshot, where, getDocs } from 'firebase/firestore';
-import { Glaze, RecipeItem, GlazeStatus } from '../types';
+import { Glaze, GlazeCopy, RecipeItem, GlazeStatus } from '../types';
 import { STATUS_LABELS } from '../constants';
 import { motion } from 'motion/react';
 import { Save, Plus, Trash2, Calculator, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload, FileInput, Copy } from 'lucide-react';
@@ -10,6 +10,7 @@ import { cn } from '../lib/utils';
 
 interface GlazeFormProps {
   glazeId: string | null;
+  initialCopyIndex?: number | null;
   onCancel: () => void;
   onSuccess: () => void;
   onDelete: (id: string) => void;
@@ -404,15 +405,16 @@ function AutocompleteInput({ value, onChange, placeholder, wrapperClassName, inp
   );
 }
 
-export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: GlazeFormProps) {
+export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, onSuccess, onDelete }: GlazeFormProps) {
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [sourceError, setSourceError] = useState('');
-  const [sourceUrl, setSourceUrl] = useState('https://glazy.org/recipes/669259');
+  const [sourceUrl, setSourceUrl] = useState('');
   const [bulkImporting, setBulkImporting] = useState(false);
   const [bulkImportMessage, setBulkImportMessage] = useState('');
+  const [activeCopyIndex, setActiveCopyIndex] = useState(-1);
   const [codeDuplicate, setCodeDuplicate] = useState(false);
   const [codeManuallyEdited, setCodeManuallyEdited] = useState(false);
   const [calcMode, setCalcMode] = useState<'percent' | 'grams'>('grams');
@@ -437,6 +439,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
       totalBase: 100
     }
   });
+  const [originalData, setOriginalData] = useState<Glaze | null>(null);
 
   const [variant, setVariant] = useState('');
   const [nextNumber, setNextNumber] = useState('001');
@@ -499,7 +502,16 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             const data = docSnap.data() as Glaze;
-            setFormData(data);
+            setOriginalData(data);
+            const copyIndex = initialCopyIndex ?? -1;
+            const copy = copyIndex >= 0 ? data.copies?.[copyIndex] : null;
+            if (copy) {
+              setFormData({ ...copy, copies: data.copies || [] });
+              setActiveCopyIndex(copyIndex);
+            } else {
+              setFormData(data);
+              setActiveCopyIndex(-1);
+            }
             
             const codeParts = data.code.split('-');
             if (codeParts.length >= 4) {
@@ -515,7 +527,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
       };
       fetchGlaze();
     }
-  }, [glazeId]);
+  }, [glazeId, initialCopyIndex]);
 
   const syncRecipeTotals = (recipe: NonNullable<typeof formData.recipe>) => {
     recipe.totalBase = recipe.base.reduce((acc, item) => acc + (Number(item.amount) || 0), 0);
@@ -608,6 +620,81 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
 
     return `${baseCode}-${Date.now().toString().slice(-6)}`;
   };
+
+  const getStoredCopies = () => originalData?.copies || formData.copies || [];
+
+  const selectOriginal = () => {
+    if (originalData) {
+      setFormData(originalData);
+    }
+    setActiveCopyIndex(-1);
+  };
+
+  const selectCopy = (index: number) => {
+    const copy = getStoredCopies()[index];
+    if (!copy) return;
+    setFormData({ ...copy, copies: getStoredCopies() });
+    setActiveCopyIndex(index);
+  };
+
+  const buildCopyFromActiveForm = (copyNumber: number, existingCopy?: GlazeCopy): GlazeCopy => {
+    const now = new Date();
+    const recipe = formData.recipe
+      ? syncRecipeTotals({
+          ...formData.recipe,
+          base: formData.recipe.base.map(item => ({ ...item })),
+          additional: formData.recipe.additional.map(item => ({ ...item })),
+        })
+      : {
+          base: [],
+          additional: [],
+          totalBase: 0
+        };
+    const baseCode = activeCopyIndex >= 0
+      ? (existingCopy?.code || formData.code || 'FICHA')
+      : `${formData.code || 'FICHA'}-C${copyNumber}`;
+    const internalCopy: GlazeCopy = {
+      copyId: existingCopy?.copyId || `${Date.now()}`,
+      sourceCode: existingCopy?.sourceCode || originalData?.code || formData.code || '',
+      name: activeCopyIndex >= 0 ? (formData.name || `Copia ${copyNumber}`) : `${formData.name} - Copia ${copyNumber}`,
+      code: baseCode,
+      mainImage: formData.mainImage || '',
+      gallery: [...(formData.gallery || [])],
+      finish: formData.finish || '',
+      color: formData.color || '',
+      texture: formData.texture || '',
+      usage: [...(formData.usage || [])],
+      applicationMethod: [...(formData.applicationMethod || [])],
+      chemicalFamily: formData.chemicalFamily || '',
+      observations: formData.observations || '',
+      recipe,
+      temperature: formData.temperature || '',
+      clayBody: formData.clayBody || '',
+      firingType: formData.firingType || '',
+      atmosphere: formData.atmosphere || '',
+      status: formData.status || 'draft',
+      authorId: formData.authorId || auth.currentUser?.uid || '',
+      authorName: formData.authorName || auth.currentUser?.displayName || 'Anónimo',
+      isValidated: formData.status === 'validated' || formData.status === 'published',
+      createdAt: existingCopy?.createdAt || now,
+      updatedAt: now,
+    };
+
+    if (formData.inventoryLevel !== undefined) {
+      internalCopy.inventoryLevel = formData.inventoryLevel;
+    }
+
+    return internalCopy;
+  };
+
+  const isRepositoryStatus = (status: GlazeStatus) => status === 'validated' || status === 'published';
+
+  const moveCopyToDraft = (copy: GlazeCopy): GlazeCopy => ({
+    ...copy,
+    status: 'draft',
+    isValidated: false,
+    updatedAt: new Date(),
+  });
 
   const loadSourceFormula = async () => {
     setSourceLoading(true);
@@ -797,6 +884,36 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
 
   const handleDelete = async () => {
     if (!glazeId) return;
+    if (activeCopyIndex >= 0 && originalData) {
+      const confirmedCopy = window.confirm(`¿Quieres eliminar la Copia ${activeCopyIndex + 1}? La ficha original no se eliminará.`);
+      if (!confirmedCopy) return;
+
+      setDeleting(true);
+      try {
+        const nextCopies = [...(originalData.copies || [])];
+        nextCopies.splice(activeCopyIndex, 1);
+        const nextOriginalData = {
+          ...originalData,
+          copies: nextCopies,
+          updatedAt: new Date(),
+        };
+
+        await setDoc(doc(db, 'glazes', glazeId), {
+          ...nextOriginalData,
+          updatedAt: serverTimestamp(),
+        });
+
+        setOriginalData(nextOriginalData);
+        setFormData(nextOriginalData);
+        setActiveCopyIndex(-1);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, 'glazes');
+      } finally {
+        setDeleting(false);
+      }
+      return;
+    }
+
     const confirmed = window.confirm('¿Estás seguro de que quieres eliminar esta ficha? Esta acción no se puede deshacer.');
     if (!confirmed) return;
 
@@ -811,50 +928,36 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
     }
   };
 
-  const getAvailableDuplicateCode = async () => {
-    const baseCode = (formData.code || 'FICHA').replace(/-COPIA(?:-\d+)?$/, '');
-
-    for (let index = 1; index <= 99; index += 1) {
-      const candidate = index === 1 ? `${baseCode}-COPIA` : `${baseCode}-COPIA-${index}`;
-      const snapshot = await getDocs(query(collection(db, 'glazes'), where('code', '==', candidate)));
-
-      if (snapshot.empty) {
-        return candidate;
-      }
-    }
-
-    return `${baseCode}-COPIA-${Date.now().toString().slice(-6)}`;
-  };
-
   const handleDuplicate = async () => {
     if (!glazeId || !formData.name) return;
+    const currentCopies = getStoredCopies();
+    if (currentCopies.length >= 3) {
+      alert('Esta ficha ya tiene el máximo de 3 copias internas.');
+      return;
+    }
 
     setDuplicating(true);
     try {
-      const duplicateCode = await getAvailableDuplicateCode();
-      const recipe = formData.recipe
-        ? syncRecipeTotals({
-            ...formData.recipe,
-            base: formData.recipe.base.map(item => ({ ...item })),
-            additional: formData.recipe.additional.map(item => ({ ...item })),
-          })
-        : formData.recipe;
-
-      await addDoc(collection(db, 'glazes'), {
-        ...formData,
-        name: `${formData.name} (Copia)`,
-        code: duplicateCode,
-        gallery: [...(formData.gallery || [])],
-        recipe,
-        status: 'draft',
-        authorId: auth.currentUser?.uid,
-        authorName: auth.currentUser?.displayName || 'Anónimo',
-        createdAt: serverTimestamp(),
+      const nextCopyNumber = currentCopies.length + 1;
+      const internalCopy = {
+        ...buildCopyFromActiveForm(nextCopyNumber),
+        status: 'draft' as GlazeStatus,
+        isValidated: false,
+      };
+      const nextCopies = [...currentCopies, internalCopy];
+      const nextOriginalData = {
+        ...(originalData || formData),
+        copies: nextCopies,
+      } as Glaze;
+      await setDoc(doc(db, 'glazes', glazeId), {
+        ...nextOriginalData,
+        copies: nextCopies,
         updatedAt: serverTimestamp(),
       });
 
-      alert('Ficha duplicada como borrador. Puedes encontrarla en Borrador pruebas.');
-      onSuccess();
+      setOriginalData(nextOriginalData);
+      setFormData({ ...internalCopy, copies: nextCopies });
+      setActiveCopyIndex(nextCopies.length - 1);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'glazes');
     } finally {
@@ -884,8 +987,37 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
         createdAt: formData.createdAt || serverTimestamp(),
       };
 
-      if (glazeId) {
-        await setDoc(doc(db, 'glazes', glazeId), data);
+      if (glazeId && activeCopyIndex >= 0 && originalData) {
+        const nextCopies = [...(originalData.copies || [])];
+        const activeCopyData = buildCopyFromActiveForm(activeCopyIndex + 1, nextCopies[activeCopyIndex]);
+        nextCopies[activeCopyIndex] = activeCopyData;
+        const nextOriginalData = {
+          ...originalData,
+          status: isRepositoryStatus(activeCopyData.status) ? 'draft' as GlazeStatus : originalData.status,
+          isValidated: isRepositoryStatus(activeCopyData.status) ? false : originalData.isValidated,
+          copies: isRepositoryStatus(activeCopyData.status)
+            ? nextCopies.map((copy, index) => index === activeCopyIndex ? { ...copy, isValidated: true } : moveCopyToDraft(copy))
+            : nextCopies,
+          updatedAt: new Date(),
+        };
+        const savedActiveCopy = nextOriginalData.copies[activeCopyIndex];
+
+        await setDoc(doc(db, 'glazes', glazeId), {
+          ...nextOriginalData,
+          updatedAt: serverTimestamp(),
+        });
+        setOriginalData(nextOriginalData);
+        setFormData({ ...savedActiveCopy, copies: nextOriginalData.copies });
+      } else if (glazeId) {
+        const nextData = {
+          ...data,
+          isValidated: isRepositoryStatus(data.status),
+          copies: isRepositoryStatus(data.status)
+            ? (data.copies || []).map(moveCopyToDraft)
+            : data.copies,
+        } as Glaze;
+        await setDoc(doc(db, 'glazes', glazeId), nextData);
+        setOriginalData(nextData);
       } else {
         await addDoc(collection(db, 'glazes'), data);
       }
@@ -897,14 +1029,57 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
     }
   };
 
+  const storedCopies = getStoredCopies();
+  const activeCopy = activeCopyIndex >= 0 && formData.recipe ? formData as GlazeCopy : null;
+  const showOnlyActiveVersion = isRepositoryStatus(formData.status);
+  const copySelectorIndexes = showOnlyActiveVersion && activeCopyIndex >= 0 ? [activeCopyIndex] : [0, 1, 2];
+
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="space-y-4">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <h3 className="text-2xl font-semibold tracking-tight">{glazeId ? 'Editar Esmalte' : 'Nueva Ficha Técnica'}</h3>
           <p className="text-sm text-[#636E72]">Completa los datos técnicos del laboratorio.</p>
         </div>
-        <div className="flex flex-wrap justify-end gap-3">
+        {glazeId && (
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#E4E4E2] bg-white p-2 shadow-sm">
+            {(!showOnlyActiveVersion || activeCopyIndex === -1) && (
+              <button
+                type="button"
+                onClick={selectOriginal}
+                className={cn(
+                  "rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-all",
+                  activeCopyIndex === -1 ? "bg-[#2D3436] text-white" : "text-[#636E72] hover:bg-[#F7F7F5] hover:text-[#2D3436]"
+                )}
+              >
+                Original
+              </button>
+            )}
+            {copySelectorIndexes.map((index) => {
+              const copy = storedCopies[index];
+              return (
+              <button
+                key={copy?.copyId || index}
+                type="button"
+                disabled={!copy}
+                onClick={() => selectCopy(index)}
+                className={cn(
+                  "rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-all",
+                  activeCopyIndex === index ? "bg-[#8a168a] text-white" : "text-[#636E72] hover:bg-[#F7F7F5] hover:text-[#2D3436]",
+                  !copy && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-[#636E72]"
+                )}
+              >
+                Copia {index + 1}
+              </button>
+              );
+            })}
+          </div>
+        )}
+        </div>
+
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex flex-wrap gap-3">
           <div className="flex min-w-[280px] flex-1 flex-col gap-2 sm:max-w-[520px]">
             <div className="flex overflow-hidden rounded-xl border border-red-200 bg-white shadow-sm">
               <input
@@ -945,15 +1120,17 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
               />
             </label>
           </div>
+          </div>
+          <div className="flex flex-wrap justify-end gap-3">
           {glazeId && (
             <button
               type="button"
               onClick={handleDuplicate}
-              disabled={duplicating || loading}
+              disabled={duplicating || loading || storedCopies.length >= 3}
               className="flex items-center gap-2 rounded-xl border border-[#E4E4E2] bg-white px-6 py-2.5 text-sm font-medium text-[#2D3436] transition-all hover:border-[#2D3436] hover:bg-[#F7F7F5] disabled:opacity-50"
             >
               {duplicating ? <Spinner className="h-4 w-4 animate-spin" /> : <Copy size={18} />}
-              Duplicar Ficha
+              {storedCopies.length >= 3 ? 'Máximo 3 copias' : 'Duplicar Ficha'}
             </button>
           )}
           {glazeId && (
@@ -964,7 +1141,7 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
               className="flex items-center gap-2 rounded-xl border border-red-200 px-6 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
             >
               {deleting ? <Spinner className="h-4 w-4 animate-spin" /> : <Trash2 size={18} />}
-              Eliminar
+              {activeCopyIndex >= 0 ? 'Eliminar Copia' : 'Eliminar'}
             </button>
           )}
           <button type="button" onClick={onCancel} className="rounded-xl border border-[#E4E4E2] px-6 py-2.5 text-sm font-medium hover:bg-white">
@@ -979,7 +1156,83 @@ export default function GlazeForm({ glazeId, onCancel, onSuccess, onDelete }: Gl
             Guardar Ficha
           </button>
         </div>
+        </div>
       </div>
+
+      {activeCopy && (
+        <div className="rounded-[24px] border border-[#8a168a]/20 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-6 lg:flex-row">
+            <div className="w-full overflow-hidden rounded-2xl bg-[#F7F7F5] lg:w-56">
+              {activeCopy.mainImage ? (
+                <img src={activeCopy.mainImage} className="aspect-square h-full w-full object-cover" alt={activeCopy.name} referrerPolicy="no-referrer" />
+              ) : (
+                <div className="flex aspect-square items-center justify-center text-[#B2BEC3]">
+                  <ImageIcon size={36} strokeWidth={1} />
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 flex-1 space-y-5">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-[#8a168a]">Visor de copia interna</p>
+                  <h4 className="mt-1 text-xl font-semibold tracking-tight">{activeCopy.name}</h4>
+                  <p className="mt-1 font-mono text-xs font-bold uppercase tracking-[0.18em] text-[#636E72]">{activeCopy.code}</p>
+                </div>
+                <span className="w-fit rounded-full bg-[#F7F7F5] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[#636E72]">
+                  {STATUS_LABELS[activeCopy.status]}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Color</p>
+                  <p className="mt-1 text-sm font-medium">{activeCopy.color}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Acabado</p>
+                  <p className="mt-1 text-sm font-medium">{activeCopy.finish}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Textura</p>
+                  <p className="mt-1 text-sm font-medium">{activeCopy.texture}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Atmósfera</p>
+                  <p className="mt-1 text-sm font-medium">{activeCopy.atmosphere || 'Oxidación'}</p>
+                </div>
+              </div>
+              <div className="grid gap-5 border-t border-[#E4E4E2] pt-5 lg:grid-cols-2">
+                <div>
+                  <h5 className="text-xs font-bold uppercase tracking-widest text-[#2D3436]">Composición Base</h5>
+                  <div className="mt-3 space-y-2">
+                    {activeCopy.recipe.base.map((item, index) => (
+                      <div key={`${item.material}-${index}`} className="flex justify-between gap-4 text-sm">
+                        <span className="truncate">{item.material}</span>
+                        <span className="font-mono">{item.amount}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h5 className="text-xs font-bold uppercase tracking-widest text-[#2D3436]">Adicionales</h5>
+                  <div className="mt-3 space-y-2">
+                    {activeCopy.recipe.additional.length > 0 ? activeCopy.recipe.additional.map((item, index) => (
+                      <div key={`${item.material}-${index}`} className="flex justify-between gap-4 text-sm">
+                        <span className="truncate">{item.material}</span>
+                        <span className="font-mono">{item.amount}</span>
+                      </div>
+                    )) : (
+                      <p className="text-sm text-[#636E72]">Sin adicionales</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {activeCopy.observations && (
+                <p className="border-t border-[#E4E4E2] pt-5 text-sm leading-relaxed text-[#636E72]">{activeCopy.observations}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
         {/* Left Column: Info */}
