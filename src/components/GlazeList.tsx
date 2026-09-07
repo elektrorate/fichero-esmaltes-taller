@@ -99,16 +99,20 @@ export default function GlazeList({
       isCopy: false,
     };
 
-    const copies = (glaze.copies || []).map((copy, index) => ({
-      ...glaze,
-      ...copy,
-      id: glaze.id,
-      copies: glaze.copies,
-      displayId: `${glaze.id}-copy-${copy.copyId || index}`,
-      parentId: glaze.id!,
-      copyIndex: index,
-      isCopy: true,
-    } as DisplayGlaze));
+    const copies = (glaze.copies || []).flatMap((copy, index) => {
+      if (copy.status !== 'published') return [];
+
+      return [{
+        ...glaze,
+        ...copy,
+        id: glaze.id,
+        copies: glaze.copies,
+        displayId: `${glaze.id}-copy-${copy.copyId || index}`,
+        parentId: glaze.id!,
+        copyIndex: index,
+        isCopy: true,
+      } as DisplayGlaze];
+    });
 
     return [original, ...copies];
   });
