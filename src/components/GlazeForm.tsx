@@ -119,6 +119,10 @@ const extractGlazyRecipeId = (url: string) => {
   return match?.[1];
 };
 
+const looksLikeSpreadsheetSource = (value: string) => {
+  return /docs\.google\.com\/spreadsheets|\.xlsx(?:\?|#|$)|\.xls(?:\?|#|$)|\.csv(?:\?|#|$)|\.tsv(?:\?|#|$)/i.test(value);
+};
+
 const getGlazyImageUrl = (materialId: number | string, filename?: string, size = 'l') => {
   if (!filename) return '';
   const id = `${materialId}`;
@@ -708,6 +712,10 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     setSourceError('');
 
     try {
+      if (looksLikeSpreadsheetSource(sourceUrl)) {
+        throw new Error('Ese enlace parece ser de Excel o Google Sheets. Para cargar varias URLs usa el botón "Subir archivo Excel con URLs" de abajo.');
+      }
+
       let importedRecipe: GlazyRecipeImport;
       try {
         importedRecipe = await fetchGlazyRecipeFromApi(sourceUrl);
@@ -1127,7 +1135,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
                   setSourceUrl(event.target.value);
                   setSourceError('');
                 }}
-                placeholder="URL de fórmula Glazy..."
+                placeholder="Pega una URL de receta Glazy..."
                 className="min-w-0 flex-1 px-4 py-2.5 text-sm outline-none"
               />
               <button
@@ -1137,7 +1145,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
                 className="flex shrink-0 items-center gap-2 bg-red-600 px-5 py-2.5 text-sm font-bold uppercase tracking-wide text-white transition-all hover:bg-red-700 disabled:opacity-70"
               >
                 {sourceLoading ? <Spinner className="h-4 w-4 animate-spin" /> : <FileInput size={18} />}
-                Cargar fórmula fuente
+                Cargar 1 fórmula Glazy
               </button>
             </div>
             {sourceError && (
@@ -1148,7 +1156,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
             )}
             <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#E4E4E2] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-[#2D3436] transition-all hover:border-[#2D3436] hover:bg-[#F7F7F5]">
               {bulkImporting ? <Spinner className="h-4 w-4 animate-spin" /> : <Upload size={16} />}
-              Cargar Excel con URLs
+              Subir archivo Excel con URLs
               <input
                 type="file"
                 accept=".xlsx,.xls,.csv,.tsv"
