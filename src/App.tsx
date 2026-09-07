@@ -44,7 +44,7 @@ const FILTER_OPTIONS = {
   families: ['Borosilicato', 'Feldespático', 'Litio', 'Zinc', 'Magnesio', 'Cenizas', 'Alta alúmina', 'Baja expansión'],
   statuses: [
     { value: 'published', label: 'Publicado' },
-    { value: 'validated', label: 'Validado' },
+    { value: 'validated', label: 'Formulado' },
     { value: 'pending', label: 'En Pruebas' },
     { value: 'draft', label: 'Borrador' }
   ]

@@ -39,7 +39,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const cards = [
     { label: 'Total Esmaltes', value: stats.total, icon: Database, color: 'text-blue-500', bg: 'bg-blue-50' },
     { label: 'Pendientes', value: stats.pending, icon: AlertCircle, color: 'text-amber-500', bg: 'bg-amber-50' },
-    { label: 'Validados', value: stats.validated, icon: CheckCircle, color: 'text-emerald-500', bg: 'bg-emerald-50' },
+    { label: 'Formulados', value: stats.validated, icon: CheckCircle, color: 'text-emerald-500', bg: 'bg-emerald-50' },
     { label: 'Actividad', value: '+12%', icon: TrendingUp, color: 'text-purple-500', bg: 'bg-purple-50' },
   ];
 

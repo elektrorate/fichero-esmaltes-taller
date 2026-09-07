@@ -735,9 +735,28 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
   const extractGlazyUrlsFromWorkbook = (workbook: XLSX.WorkBook) => {
     const urls = new Set<string>();
-    const urlPattern = /https?:\/\/(?:www\.)?glazy\.org\/recipes\/\d+/gi;
+    const urlPattern = /(?:https?:\/\/)?(?:www\.)?glazy\.org\/recipes\/(\d+)/gi;
+    const recipeIdPattern = /^\s*(\d{5,9})\s*$/;
+
+    const collectUrl = (value: unknown) => {
+      if (value === null || value === undefined) return;
+      const text = String(value).trim();
+      if (!text) return;
+
+      let match: RegExpExecArray | null;
+      urlPattern.lastIndex = 0;
+      while ((match = urlPattern.exec(text)) !== null) {
+        urls.add(`https://glazy.org/recipes/${match[1]}`);
+      }
+
+      const recipeId = text.match(recipeIdPattern)?.[1];
+      if (recipeId) {
+        urls.add(`https://glazy.org/recipes/${recipeId}`);
+      }
+    };
 
     workbook.SheetNames.forEach((sheetName) => {
+      const sheet = workbook.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], {
         header: 1,
         raw: false,
@@ -745,10 +764,18 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       });
 
       rows.flat().forEach((value) => {
-        if (typeof value !== 'string') return;
-        const matches = value.match(urlPattern);
-        matches?.forEach((url) => urls.add(url));
+        collectUrl(value);
       });
+
+      const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+      for (let row = range.s.r; row <= range.e.r; row += 1) {
+        for (let col = range.s.c; col <= range.e.c; col += 1) {
+          const cell = sheet[XLSX.utils.encode_cell({ r: row, c: col })];
+          collectUrl(cell?.v);
+          collectUrl(cell?.w);
+          collectUrl(cell?.l?.Target);
+        }
+      }
     });
 
     return Array.from(urls);
