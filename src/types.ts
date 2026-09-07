@@ -48,6 +48,12 @@ export interface Glaze {
   isValidated: boolean;
   inventoryLevel?: number;
   copies?: GlazeCopy[];
+  techSpecs?: TechSpecs;
+  preparation?: PreparationData;
+  firingCurve?: FiringCurve;
+  analysis?: AnalysisData;
+  application?: ApplicationData;
+  safety?: SafetyData;
 }
 
 export interface GlazeCopy extends Omit<Glaze, 'id' | 'createdAt' | 'updatedAt' | 'copies'> {
@@ -64,4 +70,77 @@ export interface Comment {
   authorName: string;
   text: string;
   createdAt: any;
+}
+
+export interface TechSpecs {
+  cone?: string;
+  targetTemperature?: number;
+  atmosphere?: string;
+  clayBodyType?: string;
+  applicationMethods?: string[];
+  characteristics?: string;
+}
+
+export interface PreparationData {
+  mixingOrder?: string;
+  initialWater?: string;
+  sieving?: string;
+  resting?: string;
+  suspensionTips?: string;
+}
+
+export interface FiringSegment {
+  index: number;
+  rate?: number;
+  targetTemperature?: number;
+  soak?: number;
+  soakUnit?: string;
+  notes?: string;
+}
+
+export interface FiringCurve {
+  name?: string;
+  program?: string;
+  finalTemperature?: number;
+  finalSoak?: number;
+  finalSoakUnit?: string;
+  cooling?: string;
+  essentialParameters?: string;
+  additionalNotes?: string;
+  segments?: FiringSegment[];
+}
+
+export interface AnalysisData {
+  chemicalBehavior?: string;
+  rawMaterialFunctions?: string;
+  defects?: string;
+  adjustments?: string;
+  generalNotes?: string;
+}
+
+export interface ApplicationPhoto {
+  url: string;
+  caption?: string;
+}
+
+export interface ApplicationData {
+  layers?: string;
+  techniques?: string[];
+  behaviorOnClays?: string;
+  recommendations?: string;
+  photos?: ApplicationPhoto[];
+}
+
+export type FoodSafetyStatus =
+  | 'No evaluado'
+  | 'En proceso de evaluación'
+  | 'Evaluado mediante ensayos'
+  | 'No recomendado para contacto alimentario';
+
+export interface SafetyData {
+  handlingPrecautions?: string;
+  glazeLimitations?: string;
+  foodSafetyInfo?: string;
+  foodContactStatus?: FoodSafetyStatus;
+  additionalSafetyNotes?: string;
 }

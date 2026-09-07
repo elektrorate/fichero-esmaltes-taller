@@ -58,3 +58,14 @@ export const matchesOrtonCone = (temperature: string, cone: string) => {
   if (!cone) return false;
   return new RegExp(`(?<![\\d])${escapeRegex(cone)}(?![\\d])`, 'i').test(temperature || '');
 };
+
+export const ATMOSPHERE_OPTIONS = ['Oxidación', 'Reducción', 'Otra', 'No especificada'];
+
+export const APPLICATION_METHOD_OPTIONS = ['Inmersión', 'Pincel', 'Aerógrafo', 'Vertido', 'Otro'];
+
+export const FOOD_SAFETY_STATUSES: string[] = [
+  'No evaluado',
+  'En proceso de evaluación',
+  'Evaluado mediante ensayos',
+  'No recomendado para contacto alimentario'
+];

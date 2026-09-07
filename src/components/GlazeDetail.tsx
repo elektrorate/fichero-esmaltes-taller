@@ -5,6 +5,7 @@ import { Glaze, Comment, UserProfile } from '../types';
 import { STATUS_LABELS } from '../constants';
 import { generateGlazePDF } from '../lib/pdfUtils';
 import { motion } from 'motion/react';
+import GlazeTechSections from './GlazeTechSections';
 import { ArrowLeft, Edit2, Share2, Printer, MessageSquare, User, Calendar, Tag, Thermometer, FlaskConical, Download, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -390,6 +391,9 @@ export default function GlazeDetail({ id, initialCopyIndex = null, profile = nul
         </div>
       </div>
       </div>
+
+      {/* Extended Tech Modules */}
+      <GlazeTechSections glaze={glaze} />
     </div>
   );
 }

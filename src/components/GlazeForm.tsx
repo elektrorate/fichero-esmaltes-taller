@@ -4,6 +4,7 @@ import { db, auth, OperationType, handleFirestoreError } from '../lib/firebase';
 import { doc, getDoc, setDoc, addDoc, deleteDoc, collection, serverTimestamp, query, orderBy, limit, onSnapshot, where, getDocs } from 'firebase/firestore';
 import { Glaze, GlazeCopy, RecipeItem, GlazeStatus } from '../types';
 import { STATUS_LABELS } from '../constants';
+import GlazeTechModules from './GlazeTechModules';
 import { motion } from 'motion/react';
 import { Save, Plus, Trash2, Calculator, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload, FileInput, Copy } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -1593,6 +1594,8 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
             </div>
           </div>
         </div>
+
+        <GlazeTechModules value={formData} onChange={setFormData} />
 
         {/* Right Column: Media & Status */}
         <div className="space-y-8">
