@@ -2,6 +2,9 @@ import { ClipboardList, FlaskConical, Flame, Microscope, Brush, ShieldCheck } fr
 import { Glaze } from '../types';
 import RichText from './RichText';
 import { cn } from '../lib/utils';
+import { computeCurve } from '../firingCurve/engine';
+import { firingCurveToProgram } from '../firingCurve/glazeToProgram';
+import FiringCurveChart from './FiringCurveChart';
 
 const hasAny = (...values: Array<string | number | undefined | string[] | undefined>) =>
   values.some((v) => {
@@ -59,6 +62,9 @@ function FieldPair({ label, value }: { label: string; value?: string }) {
 export default function GlazeTechSections({ glaze }: { glaze: Glaze }) {
   const { techSpecs, preparation, firingCurve, analysis, application, safety } = glaze;
   const sections: Array<{ id: string; show: boolean; node: React.ReactNode }> = [];
+
+  const firingProgram = firingCurveToProgram(firingCurve);
+  const curveResult = firingProgram ? computeCurve(firingProgram) : null;
 
   if (techSpecs) {
     sections.push({
@@ -161,6 +167,14 @@ export default function GlazeTechSections({ glaze }: { glaze: Glaze }) {
               />
             )}
           </div>
+          {curveResult && curveResult.ok && (
+            <div>
+              <SubLabel>Gráfica de la curva</SubLabel>
+              <div className="mt-2">
+                <FiringCurveChart program={firingProgram!} result={curveResult} />
+              </div>
+            </div>
+          )}
           {firingCurve.cooling && (
             <div>
               <SubLabel>Enfriamiento</SubLabel>
@@ -180,36 +194,74 @@ export default function GlazeTechSections({ glaze }: { glaze: Glaze }) {
             </div>
           )}
           {segments.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[560px] text-sm">
-                <thead>
-                  <tr className="border-b border-[#E4E4E2] text-left text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">
-                    <th className="py-2 pr-4">Segmento</th>
-                    <th className="py-2 pr-4">Velocidad</th>
-                    <th className="py-2 pr-4">T° objetivo</th>
-                    <th className="py-2 pr-4">Meseta</th>
-                    <th className="py-2">Observaciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#F4F4F2]">
+            <>
+              <div>
+                <SubLabel>Segmentos de cocción</SubLabel>
+                <div className="mt-2 space-y-3 sm:hidden">
                   {segments.map((seg) => (
-                    <tr key={seg.index}>
-                      <td className="py-2.5 pr-4 font-mono font-semibold">{seg.index}</td>
-                      <td className="py-2.5 pr-4 font-mono">
-                        {seg.rate !== undefined ? `${seg.rate} °C/h` : '—'}
-                      </td>
-                      <td className="py-2.5 pr-4 font-mono">
-                        {seg.targetTemperature !== undefined ? `${seg.targetTemperature} °C` : '—'}
-                      </td>
-                      <td className="py-2.5 pr-4 font-mono">
-                        {seg.soak !== undefined && seg.soak !== 0 ? `${seg.soak} ${seg.soakUnit || 'min'}` : '—'}
-                      </td>
-                      <td className="py-2.5 text-[#636E72]">{seg.notes || '—'}</td>
-                    </tr>
+                    <div key={seg.index} className="rounded-2xl border border-[#F4F4F2] bg-[#F7F7F5] p-4">
+                      <span className="text-xs font-bold uppercase tracking-widest text-[#8a168a]">
+                        Segmento {seg.index}
+                      </span>
+                      <div className="mt-3 grid grid-cols-1 gap-3">
+                        <div>
+                          <SubLabel>Velocidad</SubLabel>
+                          <TextValue>{seg.rate !== undefined ? `${seg.rate} °C/h` : '—'}</TextValue>
+                        </div>
+                        <div>
+                          <SubLabel>Temperatura objetivo</SubLabel>
+                          <TextValue>
+                            {seg.targetTemperature !== undefined ? `${seg.targetTemperature} °C` : '—'}
+                          </TextValue>
+                        </div>
+                        <div>
+                          <SubLabel>Meseta</SubLabel>
+                          <TextValue>
+                            {seg.soak !== undefined && seg.soak !== 0
+                              ? `${seg.soak} ${seg.soakUnit || 'min'}`
+                              : '—'}
+                          </TextValue>
+                        </div>
+                        <div>
+                          <SubLabel>Observaciones</SubLabel>
+                          <TextValue>{seg.notes || '—'}</TextValue>
+                        </div>
+                      </div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+                <div className="hidden overflow-x-auto sm:block">
+                  <table className="w-full min-w-[560px] text-sm">
+                    <thead>
+                      <tr className="border-b border-[#E4E4E2] text-left text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">
+                        <th className="py-2 pr-4">Segmento</th>
+                        <th className="py-2 pr-4">Velocidad</th>
+                        <th className="py-2 pr-4">T° objetivo</th>
+                        <th className="py-2 pr-4">Meseta</th>
+                        <th className="py-2">Observaciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#F4F4F2]">
+                      {segments.map((seg) => (
+                        <tr key={seg.index}>
+                          <td className="py-2.5 pr-4 font-mono font-semibold">{seg.index}</td>
+                          <td className="py-2.5 pr-4 font-mono">
+                            {seg.rate !== undefined ? `${seg.rate} °C/h` : '—'}
+                          </td>
+                          <td className="py-2.5 pr-4 font-mono">
+                            {seg.targetTemperature !== undefined ? `${seg.targetTemperature} °C` : '—'}
+                          </td>
+                          <td className="py-2.5 pr-4 font-mono">
+                            {seg.soak !== undefined && seg.soak !== 0 ? `${seg.soak} ${seg.soakUnit || 'min'}` : '—'}
+                          </td>
+                          <td className="py-2.5 text-[#636E72]">{seg.notes || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
           )}
         </Section>
       ),

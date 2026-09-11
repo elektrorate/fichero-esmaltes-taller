@@ -72,7 +72,10 @@ export default function GlazeDetail({ id, initialCopyIndex = null, profile = nul
     if (!glaze) return;
     setIsExporting(true);
     try {
-      await generateGlazePDF(glaze);
+      // Exporta la entidad visible (original o copia activa) para que el PDF
+      // refleje exactamente la información de la ficha que se está consultando,
+      // incluidas todas sus secciones técnicas.
+      await generateGlazePDF(techGlaze);
     } catch (error) {
       console.error('Error exporting PDF:', error);
     } finally {
@@ -84,9 +87,21 @@ export default function GlazeDetail({ id, initialCopyIndex = null, profile = nul
   if (!glaze) return <div className="py-20 text-center text-[#636E72]">Ficha no encontrada.</div>;
   const activeCopy = activeCopyIndex >= 0 ? glaze.copies?.[activeCopyIndex] : null;
   const visibleGlaze = activeCopy || glaze;
+  // Las secciones técnicas se muestran/exportan desde la entidad visible (copia activa
+  // u original). Para no perder información en copias antiguas sin módulos técnicos,
+  // se completa cada sección con la del original cuando la copia no la define.
+  const techGlaze: Glaze = {
+    ...visibleGlaze,
+    techSpecs: visibleGlaze.techSpecs || glaze.techSpecs,
+    preparation: visibleGlaze.preparation || glaze.preparation,
+    firingCurve: visibleGlaze.firingCurve || glaze.firingCurve,
+    analysis: visibleGlaze.analysis || glaze.analysis,
+    application: visibleGlaze.application || glaze.application,
+    safety: visibleGlaze.safety || glaze.safety,
+  };
   const visibleImages = [visibleGlaze.mainImage, ...(visibleGlaze.gallery || [])].filter(Boolean);
   const isRepositoryStatus = visibleGlaze.status === 'validated' || visibleGlaze.status === 'published';
-  const showCopySelector = !isRepositoryStatus && (glaze.copies?.length || 0) > 0;
+  const showCopySelector = (glaze.copies?.length || 0) > 0;
 
   return (
     <div className="space-y-8">
@@ -393,7 +408,7 @@ export default function GlazeDetail({ id, initialCopyIndex = null, profile = nul
       </div>
 
       {/* Extended Tech Modules */}
-      <GlazeTechSections glaze={glaze} />
+      <GlazeTechSections glaze={techGlaze} />
     </div>
   );
 }

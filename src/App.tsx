@@ -14,6 +14,8 @@ import {
   Search, 
   Filter, 
   FileClock,
+  Flame,
+  Layers,
   ChevronRight,
   Menu,
   X,
@@ -28,6 +30,9 @@ import GlazeForm from './components/GlazeForm';
 import GlazeDetail from './components/GlazeDetail';
 import AdminPanel from './components/AdminPanel';
 import SettingsPanel from './components/SettingsPanel';
+import FiringCurveView, { firingCurveGuard } from './components/FiringCurveView';
+import RecalculoWorkspace from './components/RecalculoWorkspace';
+import FormulatedWorkspace from './components/FormulatedWorkspace';
 
 export interface GlazeFilters {
   color?: string;
@@ -50,7 +55,26 @@ const FILTER_OPTIONS = {
   ]
 };
 
-type View = 'dashboard' | 'repository' | 'draft-tests' | 'create' | 'detail' | 'admin' | 'settings' | 'inventory-alerts';
+type View = 'dashboard' | 'repository' | 'draft-tests' | 'recalculo' | 'formuladas' | 'create' | 'detail' | 'admin' | 'settings' | 'inventory-alerts' | 'firing-curve';
+
+const VIEW_HASH: Record<string, View> = {
+  dashboard: 'dashboard',
+  repository: 'repository',
+  'draft-tests': 'draft-tests',
+  create: 'create',
+  detail: 'detail',
+  admin: 'admin',
+  settings: 'settings',
+  'inventory-alerts': 'inventory-alerts',
+  'firing-curve': 'firing-curve',
+  formuladas: 'formuladas',
+};
+
+function viewFromHash(hash: string): View | null {
+  const key = hash.replace(/^#\/?/, '').trim();
+  if (!key) return null;
+  return VIEW_HASH[key] ?? null;
+}
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -68,6 +92,30 @@ export default function App() {
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
 
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Deep-link por hash (#/firing-curve, #/repository, ...)
+  useEffect(() => {
+    const target = viewFromHash(window.location.hash);
+    if (target && target !== 'detail') setCurrentView(target);
+  }, []);
+
+  useEffect(() => {
+    window.history.replaceState(null, '', `#/${currentView}`);
+  }, [currentView]);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const target = viewFromHash(window.location.hash);
+      if (target === null || target === 'detail') return;
+      if (currentView === 'firing-curve' && target !== 'firing-curve' && !firingCurveGuard.check()) {
+        window.location.hash = `#/${currentView}`;
+        return;
+      }
+      setCurrentView(target);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, [currentView]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -256,6 +304,8 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'repository', label: 'Repositorio', icon: Database },
     { id: 'draft-tests', label: 'Borrador pruebas', icon: FileClock },
+    { id: 'formuladas', label: 'Formuladas', icon: Layers },
+    { id: 'firing-curve', label: 'Curva de Cocción', icon: Flame },
     { id: 'create', label: 'Nueva Ficha', icon: PlusCircle },
     { id: 'admin', label: 'Administración', icon: Users, roles: ['admin'] as UserRole[] },
     { id: 'settings', label: 'Inventario', icon: Settings },
@@ -264,7 +314,9 @@ export default function App() {
   const filteredNavItems = navItems.filter(item => !item.roles || (profile && item.roles.includes(profile.role)));
   const headerTitle = currentView === 'inventory-alerts'
     ? 'Inventario en Alerta'
-    : navItems.find(i => i.id === currentView)?.label || 'Detalle';
+    : currentView === 'firing-curve'
+      ? 'Curva de Cocción'
+      : navItems.find(i => i.id === currentView)?.label || 'Detalle';
 
   return (
     <div className="flex h-screen w-full bg-[#F7F7F5] text-[#2D3436]">
@@ -301,6 +353,9 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => {
+                if (currentView === 'firing-curve' && item.id !== 'firing-curve' && !firingCurveGuard.check()) {
+                  return;
+                }
                 setCurrentView(item.id as View);
                 if (item.id === 'create') {
                   setSelectedGlazeId(null);
@@ -495,6 +550,7 @@ export default function App() {
             >
               {currentView === 'dashboard' && (
                 <Dashboard
+                  profile={profile}
                   onNavigate={(view, id) => {
                     setCurrentView(view as View);
                     if (id) setSelectedGlazeId(id);
@@ -516,11 +572,14 @@ export default function App() {
                   searchQuery={searchQuery}
                   activeFilters={activeFilters}
                   statusScope={['draft', 'pending']}
+                  showStatusFilter
                   profile={profile}
                   onSelect={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('detail'); }} 
                   onEdit={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('create'); }}
                 />
               )}
+              {currentView === 'recalculo' && <RecalculoWorkspace profile={profile} />}
+              {currentView === 'formuladas' && <FormulatedWorkspace profile={profile} />}
               {currentView === 'inventory-alerts' && (
                 <GlazeList
                   searchQuery={searchQuery}
@@ -551,6 +610,7 @@ export default function App() {
               )}
               {currentView === 'admin' && <AdminPanel />}
               {currentView === 'settings' && <SettingsPanel />}
+              {currentView === 'firing-curve' && <FiringCurveView />}
             </motion.div>
           </AnimatePresence>
         </div>

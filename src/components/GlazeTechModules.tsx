@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ClipboardList,
   FlaskConical,
@@ -11,11 +11,18 @@ import {
   ArrowUp,
   ArrowDown,
   ImagePlus,
+  ExternalLink,
 } from 'lucide-react';
-import { Glaze, TechSpecs, PreparationData, FiringCurve, FiringSegment, AnalysisData, ApplicationData, ApplicationPhoto, SafetyData } from '../types';
+import { Glaze, TechSpecs, PreparationData, FiringCurve, AnalysisData, ApplicationData, ApplicationPhoto, SafetyData } from '../types';
 import { ORTON_CONES, ATMOSPHERE_OPTIONS, APPLICATION_METHOD_OPTIONS, FOOD_SAFETY_STATUSES } from '../constants';
 import RichTextEditor from './RichTextEditor';
 import { cn } from '../lib/utils';
+import { SYSTEM_PRESETS } from '../firingCurve/presets';
+import { subscribePrograms } from '../firingCurve/persistence';
+import { programToGlazeCurve } from '../firingCurve/importToGlaze';
+import { computeCurve, formatDuration } from '../firingCurve/engine';
+import { FiringProgram } from '../firingCurve/types';
+import FiringCurveChart from './FiringCurveChart';
 
 const TABS = [
   { id: 'specs', label: 'Ficha técnica', icon: ClipboardList },
@@ -30,6 +37,21 @@ type TabId = (typeof TABS)[number]['id'];
 
 const fieldInput =
   'w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-sm outline-none focus:border-[#2D3436] focus:bg-white';
+
+const TYPE_LABEL: Record<FiringProgram['type'], string> = {
+  bisque: 'Bizcochado',
+  glaze: 'Esmalte',
+  custom: 'Personalizado',
+};
+
+function Chip({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-[#F9F9F7] p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-[#85929E]">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold text-[#2D3436]">{value}</p>
+    </div>
+  );
+}
 
 function Label({ children }: { children: React.ReactNode }) {
   return <label className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">{children}</label>;
@@ -241,26 +263,6 @@ export default function GlazeTechModules({ value, onChange }: GlazeTechModulesPr
   const setSafety = (p: Partial<SafetyData>) =>
     onChange({ ...value, safety: { ...(value.safety || {}), ...p } });
 
-  const segments = value.firingCurve?.segments || [];
-
-  const addSegment = () => setFiringCurve({ segments: [...segments, { index: segments.length + 1 }] });
-  const updateSegment = (idx: number, p: Partial<Omit<FiringSegment, 'index'>>) => {
-    const next = [...segments];
-    next[idx] = { ...next[idx], ...p };
-    setFiringCurve({ segments: next });
-  };
-  const removeSegment = (idx: number) => {
-    setFiringCurve({ segments: segments.filter((_, i) => i !== idx).map((s, i) => ({ ...s, index: i + 1 })) });
-  };
-  const moveSegment = (idx: number, dir: -1 | 1) => {
-    const target = idx + dir;
-    if (target < 0 || target >= segments.length) return;
-    const next = [...segments];
-    const [item] = next.splice(idx, 1);
-    next.splice(target, 0, item);
-    setFiringCurve({ segments: next.map((s, i) => ({ ...s, index: i + 1 })) });
-  };
-
   const photos = value.application?.photos || [];
 
   const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -292,6 +294,49 @@ export default function GlazeTechModules({ value, onChange }: GlazeTechModulesPr
     setApplication({ photos: next });
   };
 
+  // ---- Programas de «Curva de Cocción» para vincular a la ficha ----
+  const [userPrograms, setUserPrograms] = useState<FiringProgram[]>([]);
+  useEffect(() => {
+    const unsub = subscribePrograms((items) => {
+      setUserPrograms(items);
+    });
+    return unsub;
+  }, []);
+
+  const systemPrograms = useMemo(
+    () =>
+      SYSTEM_PRESETS.map((p) => ({
+        program: p,
+        maxTemp: computeCurve(p).metrics.maxTemp,
+      })),
+    [],
+  );
+
+  const selectedProgram = useMemo(() => {
+    const id = value.firingCurve?.programId;
+    if (!id) return null;
+    return (
+      SYSTEM_PRESETS.find((p) => p.id === id) ??
+      userPrograms.find((p) => p.id === id) ??
+      null
+    );
+  }, [value.firingCurve?.programId, userPrograms]);
+
+  const curveResult = useMemo(
+    () => (selectedProgram ? computeCurve(selectedProgram) : null),
+    [selectedProgram],
+  );
+
+  const onSelectProgram = (id: string) => {
+    if (!id) {
+      onChange({ ...value, firingCurve: undefined });
+      return;
+    }
+    const p = SYSTEM_PRESETS.find((x) => x.id === id) ?? userPrograms.find((x) => x.id === id);
+    if (!p) return;
+    setFiringCurve(programToGlazeCurve(p, value.firingCurve));
+  };
+
   return (
     <div className="overflow-hidden rounded-[24px] bg-white shadow-sm">
       <div className="border-b border-[#F4F4F2] p-6 pb-0">
@@ -301,14 +346,14 @@ export default function GlazeTechModules({ value, onChange }: GlazeTechModulesPr
         <p className="mt-1 text-xs text-[#636E72]">
           Información técnica ampliada. Todos los campos son opcionales.
         </p>
-        <div className="mt-4 flex flex-wrap gap-1.5 pb-4">
+        <div className="mt-4 grid grid-cols-1 gap-1.5 pb-4 sm:flex sm:flex-wrap">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
               onClick={() => setTab(id)}
               className={cn(
-                'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all',
+                'flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all sm:justify-start',
                 tab === id
                   ? 'bg-[#2D3436] text-white shadow-sm'
                   : 'bg-[#F7F7F5] text-[#636E72] hover:bg-[#F4F4F2] hover:text-[#2D3436]'
@@ -324,7 +369,7 @@ export default function GlazeTechModules({ value, onChange }: GlazeTechModulesPr
       <div className="p-6">
         {tab === 'specs' && (
           <div className="space-y-5">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="space-y-4">
               <div className="space-y-1.5">
                 <Label>Cono Orton</Label>
                 <select
@@ -413,218 +458,162 @@ export default function GlazeTechModules({ value, onChange }: GlazeTechModulesPr
 
         {tab === 'curve' && (
           <div className="space-y-5">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <TextField
-                label="Nombre o referencia de la curva"
-                value={value.firingCurve?.name}
-                onChange={(v) => setFiringCurve({ name: v })}
-                placeholder="Ej. Curva de gres 10h"
-              />
-              <TextField
-                label="Programa utilizado"
-                value={value.firingCurve?.program}
-                onChange={(v) => setFiringCurve({ program: v })}
-                placeholder="Ej. Horno Rieda 25, programa P4"
-              />
-              <NumberField
-                label="Temperatura final"
-                value={value.firingCurve?.finalTemperature}
-                onChange={(v) => setFiringCurve({ finalTemperature: v })}
-                placeholder="Ej. 1260"
-                suffix="°C"
-              />
-              <div className="space-y-1.5">
-                <Label>Meseta final</Label>
-                <div className="flex gap-2">
-                  <div className="flex flex-1 items-center rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] focus-within:border-[#2D3436]">
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="any"
-                      value={value.firingCurve?.finalSoak ?? ''}
-                      onChange={(e) =>
-                        setFiringCurve({ finalSoak: e.target.value === '' ? undefined : Number(e.target.value) })
-                      }
-                      placeholder="Ej. 30"
-                      className="w-full min-w-0 rounded-l-xl bg-transparent px-3 py-2 text-sm outline-none"
-                    />
-                  </div>
-                  <select
-                    value={value.firingCurve?.finalSoakUnit || ''}
-                    onChange={(e) => setFiringCurve({ finalSoakUnit: e.target.value })}
-                    className={cn(fieldInput, 'w-24')}
-                  >
-                    <option value="">Unidad</option>
-                    <option value="min">min</option>
-                    <option value="h">h</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-            <RichField
-              label="Enfriamiento"
-              value={value.firingCurve?.cooling}
-              onChange={(v) => setFiringCurve({ cooling: v })}
-              placeholder="Curva de enfriamiento, apertura del horno, reposo..."
-            />
-            <RichField
-              label="Parámetros esenciales para el resultado"
-              value={value.firingCurve?.essentialParameters}
-              onChange={(v) => setFiringCurve({ essentialParameters: v })}
-              placeholder="Factores críticos de esta curva..."
-            />
-            <TextField
-              label="Observaciones adicionales"
-              value={value.firingCurve?.additionalNotes}
-              onChange={(v) => setFiringCurve({ additionalNotes: v })}
-              placeholder="Notas extra sobre la curva"
-            />
-
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
+            {/* Selector de programa guardado en «Curva de Cocción» */}
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h5 className="text-xs font-bold uppercase tracking-widest text-[#2D3436]">
-                    Segmentos de cocción
-                  </h5>
-                  <p className="text-[11px] text-[#636E72]">
-                    Rampas de calentamiento y enfriamiento. Velocidad negativa para enfriar.
+                  <Label>Programa de cocción</Label>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-[#636E72]">
+                    La curva no se edita aquí: pulsa un programa de abajo para vincularlo a esta ficha. Así se muestra en
+                    la ficha pública.
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={addSegment}
-                  className="flex items-center gap-1.5 rounded-xl bg-[#2D3436] px-3 py-2 text-xs font-bold text-white hover:bg-black"
+                  onClick={() => {
+                    window.location.hash = '#/firing-curve';
+                  }}
+                  className="flex items-center gap-1.5 rounded-xl border border-[#E4E4E2] px-4 py-2 text-sm font-medium text-[#2D3436] hover:bg-[#F7F7F5]"
                 >
-                  <Plus size={14} />
-                  Añadir segmento
+                  <ExternalLink size={15} />
+                  Crear / editar en «Curva de Cocción»
                 </button>
               </div>
-              {segments.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-[#E4E4E2] p-8 text-center text-xs text-[#B2BEC3]">
-                  Sin segmentos. Pulsa «Añadir segmento» para definir la curva.
+
+              {/* Presets del sistema */}
+              <div className="space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Presets del sistema</p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {systemPrograms.map(({ program, maxTemp }) => (
+                    <button
+                      key={program.id}
+                      type="button"
+                      onClick={() => onSelectProgram(program.id!)}
+                      className={cn(
+                        'flex flex-col items-start rounded-2xl border p-3 text-left transition-all',
+                        selectedProgram?.id === program.id
+                          ? 'border-[#8a168a] bg-[#8a168a]/5 shadow-sm'
+                          : 'border-[#E4E4E2] bg-[#F7F7F5] hover:border-[#2D3436] hover:bg-white',
+                      )}
+                    >
+                      <span className="text-sm font-semibold text-[#2D3436]">{program.name}</span>
+                      <span className="mt-0.5 text-[11px] text-[#85929E]">
+                        {TYPE_LABEL[program.type]} · {Math.round(maxTemp)} °C
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[640px] text-sm">
+              </div>
+
+              {/* Mis curvas guardadas */}
+              <div className="space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Mis curvas guardadas</p>
+                {userPrograms.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-[#E4E4E2] p-3 text-center text-xs text-[#B2BEC3]">
+                    Aún no tienes curvas guardadas. Crea una en «Curva de Cocción».
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {userPrograms.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => onSelectProgram(p.id!)}
+                        className={cn(
+                          'flex flex-col items-start rounded-2xl border p-3 text-left transition-all',
+                          selectedProgram?.id === p.id
+                            ? 'border-[#8a168a] bg-[#8a168a]/5 shadow-sm'
+                            : 'border-[#E4E4E2] bg-[#F7F7F5] hover:border-[#2D3436] hover:bg-white',
+                        )}
+                      >
+                        <span className="text-sm font-semibold text-[#2D3436]">{p.name}</span>
+                        <span className="mt-0.5 text-[11px] text-[#85929E]">
+                          {TYPE_LABEL[p.type]}
+                          {p.cone ? ` · Cono ${p.cone}` : ''}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {value.firingCurve && (
+                <button
+                  type="button"
+                  onClick={() => onSelectProgram('')}
+                  className="flex items-center gap-1.5 rounded-xl border border-red-200 px-4 py-2 text-xs font-medium text-red-600 hover:bg-red-50"
+                >
+                  Desvincular curva de esta ficha
+                </button>
+              )}
+            </div>
+
+            {selectedProgram && curveResult ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <Chip label="T. inicial" value={`${Math.round(curveResult.metrics.initialTemp)} °C`} />
+                  <Chip label="T. máxima" value={`${Math.round(curveResult.metrics.maxTemp)} °C`} />
+                  <Chip label="Duración" value={formatDuration(curveResult.metrics.totalDurationMin)} />
+                  <Chip label="Cono Orton" value={selectedProgram.cone ? `Cono ${selectedProgram.cone}` : '—'} />
+                </div>
+
+                <FiringCurveChart program={selectedProgram} result={curveResult} />
+
+                <div className="overflow-x-auto rounded-2xl border border-[#E4E4E2]">
+                  <table className="w-full min-w-[560px] text-sm">
                     <thead>
                       <tr className="border-b border-[#E4E4E2] text-left text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">
-                        <th className="py-2 pr-2">Nº</th>
-                        <th className="py-2 pr-2">Velocidad</th>
-                        <th className="py-2 pr-2">T° objetivo</th>
-                        <th className="py-2 pr-2">Meseta</th>
-                        <th className="py-2 pr-2">Unidad</th>
-                        <th className="py-2 pr-2">Observaciones</th>
-                        <th className="py-2 text-right">Acciones</th>
+                        <th className="px-3 py-2">#</th>
+                        <th className="px-3 py-2">Tipo</th>
+                        <th className="px-3 py-2 text-right">Inicio</th>
+                        <th className="px-3 py-2 text-right">Objetivo</th>
+                        <th className="px-3 py-2 text-right">Tasa / Duración</th>
+                        <th className="px-3 py-2 text-right">Acumulado</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#F4F4F2]">
-                      {segments.map((seg, idx) => (
-                        <tr key={idx}>
-                          <td className="py-2 pr-2">
-                            <input
-                              type="number"
-                              value={seg.index}
-                              readOnly
-                              className="w-14 rounded-lg border border-[#E4E4E2] bg-[#F7F7F5] px-2 py-1.5 text-center text-sm outline-none"
-                            />
-                          </td>
-                          <td className="py-2 pr-2">
-                            <div className="flex items-center rounded-lg border border-[#E4E4E2] bg-[#F7F7F5]">
-                              <input
-                                type="number"
-                                step="any"
-                                value={seg.rate ?? ''}
-                                onChange={(e) =>
-                                  updateSegment(idx, { rate: e.target.value === '' ? undefined : Number(e.target.value) })
-                                }
-                                placeholder="100"
-                                className="w-20 rounded-l-lg bg-transparent px-2 py-1.5 text-sm outline-none"
-                              />
-                              <span className="px-2 text-[10px] text-[#636E72]">°C/h</span>
-                            </div>
-                          </td>
-                          <td className="py-2 pr-2">
-                            <div className="flex items-center rounded-lg border border-[#E4E4E2] bg-[#F7F7F5]">
-                              <input
-                                type="number"
-                                step="any"
-                                value={seg.targetTemperature ?? ''}
-                                onChange={(e) =>
-                                  updateSegment(idx, {
-                                    targetTemperature: e.target.value === '' ? undefined : Number(e.target.value),
-                                  })
-                                }
-                                placeholder="1260"
-                                className="w-20 rounded-l-lg bg-transparent px-2 py-1.5 text-sm outline-none"
-                              />
-                              <span className="px-2 text-[10px] text-[#636E72]">°C</span>
-                            </div>
-                          </td>
-                          <td className="py-2 pr-2">
-                            <input
-                              type="number"
-                              step="any"
-                              value={seg.soak ?? ''}
-                              onChange={(e) =>
-                                updateSegment(idx, { soak: e.target.value === '' ? undefined : Number(e.target.value) })
-                              }
-                              placeholder="0"
-                              className="w-20 rounded-lg border border-[#E4E4E2] bg-[#F7F7F5] px-2 py-1.5 text-sm outline-none"
-                            />
-                          </td>
-                          <td className="py-2 pr-2">
-                            <select
-                              value={seg.soakUnit || ''}
-                              onChange={(e) => updateSegment(idx, { soakUnit: e.target.value })}
-                              className="w-20 rounded-lg border border-[#E4E4E2] bg-[#F7F7F5] px-2 py-1.5 text-sm outline-none"
+                      {curveResult.segments.map((s) => (
+                        <tr key={s.segmentId}>
+                          <td className="px-3 py-2 text-[#B2BEC3]">{s.index + 1}</td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={cn(
+                                'rounded-full px-2 py-0.5 text-[11px] font-medium',
+                                s.type === 'hold'
+                                  ? 'bg-orange-50 text-orange-700'
+                                  : s.direction === 'down'
+                                    ? 'bg-blue-50 text-blue-700'
+                                    : 'bg-emerald-50 text-emerald-700',
+                              )}
                             >
-                              <option value="">—</option>
-                              <option value="min">min</option>
-                              <option value="h">h</option>
-                            </select>
+                              {s.type === 'hold' ? 'Meseta' : s.direction === 'down' ? 'Rampa ↓' : 'Rampa ↑'}
+                            </span>
                           </td>
-                          <td className="py-2 pr-2">
-                            <input
-                              value={seg.notes || ''}
-                              onChange={(e) => updateSegment(idx, { notes: e.target.value })}
-                              placeholder="Notas..."
-                              className="w-full min-w-[140px] rounded-lg border border-[#E4E4E2] bg-[#F7F7F5] px-2 py-1.5 text-sm outline-none"
-                            />
+                          <td className="px-3 py-2 text-right font-mono text-[#636E72]">{Math.round(s.startTemp)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-[#636E72]">{Math.round(s.endTemp)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-[#636E72]">
+                            {s.type === 'hold' ? formatDuration(s.durationMin) : `${Math.round(s.rate ?? 0)} °C/h`}
                           </td>
-                          <td className="py-2">
-                            <div className="flex items-center justify-end gap-1">
-                              <button
-                                type="button"
-                                disabled={idx === 0}
-                                onClick={() => moveSegment(idx, -1)}
-                                className="rounded-lg p-1.5 text-[#636E72] hover:bg-[#F7F7F5] disabled:opacity-30"
-                              >
-                                <ArrowUp size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                disabled={idx === segments.length - 1}
-                                onClick={() => moveSegment(idx, 1)}
-                                className="rounded-lg p-1.5 text-[#636E72] hover:bg-[#F7F7F5] disabled:opacity-30"
-                              >
-                                <ArrowDown size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => removeSegment(idx)}
-                                className="rounded-lg p-1.5 text-red-500 hover:bg-red-50"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-[#636E72]">{formatDuration(s.endTimeMin)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div>
+                {value.firingCurve &&
+                (value.firingCurve.name ||
+                  value.firingCurve.finalTemperature !== undefined ||
+                  (value.firingCurve.segments || []).length > 0) && (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-relaxed text-amber-800">
+                    Esta ficha tiene una curva definida manualmente (sin programa vinculado). Para replantearla,
+                    selecciona un programa de las tarjetas de arriba.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

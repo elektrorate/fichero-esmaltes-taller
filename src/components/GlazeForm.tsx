@@ -5,9 +5,36 @@ import { doc, getDoc, setDoc, addDoc, deleteDoc, collection, serverTimestamp, qu
 import { Glaze, GlazeCopy, RecipeItem, GlazeStatus } from '../types';
 import { STATUS_LABELS, ATMOSPHERE_OPTIONS } from '../constants';
 import GlazeTechModules from './GlazeTechModules';
-import { motion } from 'motion/react';
-import { Save, Plus, Trash2, Calculator, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload, FileInput, Copy } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Save, Plus, Trash2, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload, FileInput, Copy, CheckCircle2, RefreshCcw, ChevronDown, FolderOpen } from 'lucide-react';
 import { cn } from '../lib/utils';
+import RecalculoModal from './RecalculoModal';
+import { buildRecalculatedRecipe, RecalcResult } from '../lib/recalcEngine';
+import { extractRecipeFromImage, extractionToRecipe } from '../lib/recipeExtractor';
+
+// Firestore no admite valores `undefined`. Elimina recursivamente todas las
+// claves con valor `undefined` (y convierte `null`/arrays vacíos donde haga
+// falta) antes de escribir, para evitar que cualquier campo anidado rompa
+// el guardado o el duplicado.
+function sanitizeForFirestore<T>(value: T): T {
+  if (value === undefined) {
+    return undefined as unknown as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => sanitizeForFirestore(v)) as unknown as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      const cleaned = sanitizeForFirestore(val);
+      if (cleaned !== undefined) {
+        out[key] = cleaned;
+      }
+    }
+    return out as T;
+  }
+  return value;
+}
 
 interface GlazeFormProps {
   glazeId: string | null;
@@ -807,7 +834,18 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
   const [codeDuplicate, setCodeDuplicate] = useState(false);
   const [codeManuallyEdited, setCodeManuallyEdited] = useState(false);
   const [calcMode, setCalcMode] = useState<'percent' | 'grams'>('grams');
-  const [targetWeight, setTargetWeight] = useState(100);
+  const [showRecalculo, setShowRecalculo] = useState(false);
+  const [imageExtracting, setImageExtracting] = useState(false);
+  const [imageError, setImageError] = useState('');
+  const [imageMessage, setImageMessage] = useState('');
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
+  const [saveSaving, setSaveSaving] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [lastSaved, setLastSaved] = useState(false);
+  const baselineRef = useRef('');
+  const savedGlazeIdRef = useRef<string | null>(null);
+  const effectiveId = glazeId || savedGlazeIdRef.current;
 
   const [formData, setFormData] = useState<Partial<Glaze>>({
     name: '',
@@ -896,9 +934,13 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
             const copy = copyIndex >= 0 ? data.copies?.[copyIndex] : null;
             if (copy) {
               setFormData({ ...copy, copies: data.copies || [] });
+              baselineRef.current = JSON.stringify(sanitizeForFirestore({ ...copy, copies: data.copies || [] }));
+              setDirty(false);
               setActiveCopyIndex(copyIndex);
             } else {
               setFormData(data);
+              baselineRef.current = JSON.stringify(sanitizeForFirestore(data));
+              setDirty(false);
               setActiveCopyIndex(-1);
             }
             
@@ -917,6 +959,15 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       fetchGlaze();
     }
   }, [glazeId, initialCopyIndex]);
+
+  // Detecta cambios sin guardar comparando el estado actual con la última
+  // versión guardada (baseline). Para fichas existentes se omite mientras el
+  // baseline aún no se ha establecido (carga inicial).
+  useEffect(() => {
+    if (glazeId && baselineRef.current === '') return;
+    const serialized = JSON.stringify(sanitizeForFirestore(formData));
+    setDirty(serialized !== baselineRef.current);
+  }, [formData, glazeId]);
 
   const syncRecipeTotals = (recipe: NonNullable<typeof formData.recipe>) => {
     recipe.totalBase = recipe.base.reduce((acc, item) => acc + (Number(item.amount) || 0), 0);
@@ -950,16 +1001,6 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
   };
 
   const { baseTotal } = calculateTotals();
-
-  const handleRescale = () => {
-    if (baseTotal === 0) return;
-    const factor = targetWeight / baseTotal;
-    const newRecipe = { ...formData.recipe! };
-    newRecipe.base = newRecipe.base.map(item => ({ ...item, amount: Number((item.amount * factor).toFixed(1)) }));
-    newRecipe.additional = newRecipe.additional.map(item => ({ ...item, amount: Number((item.amount * factor).toFixed(1)) }));
-    newRecipe.totalBase = targetWeight;
-    setFormData({ ...formData, recipe: newRecipe });
-  };
 
   const buildGlazeFromImportedRecipe = (importedRecipe: GlazyRecipeImport, originalUrl: string): Partial<Glaze> => {
     const notes = [
@@ -1033,7 +1074,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     setActiveCopyIndex(index);
   };
 
-  const buildCopyFromActiveForm = (copyNumber: number, existingCopy?: GlazeCopy): GlazeCopy => {
+  const buildCopyFromActiveForm = (copyNumber: number, existingCopy?: GlazeCopy, recalcNameCode?: boolean): GlazeCopy => {
     const now = new Date();
     const recipe = formData.recipe
       ? syncRecipeTotals({
@@ -1046,14 +1087,24 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
           additional: [],
           totalBase: 0
         };
-    const baseCode = activeCopyIndex >= 0
-      ? (existingCopy?.code || formData.code || 'FICHA')
-      : `${formData.code || 'FICHA'}-C${copyNumber}`;
+    // Nombre y código "recalculados": al crear una copia nueva (duplicar) siempre
+    // se genera un identificador propio para distinguirla en el listado. Al guardar
+    // una copia existente se conserva lo que el usuario haya editado.
+    const sourceName = recalcNameCode
+      ? `${(formData.name || 'Ficha').trim()} - Copia ${copyNumber}`
+      : activeCopyIndex >= 0
+        ? (formData.name || `Copia ${copyNumber}`)
+        : `${formData.name} - Copia ${copyNumber}`;
+    const sourceCode = recalcNameCode
+      ? `${formData.code || 'FICHA'}-C${copyNumber}`
+      : activeCopyIndex >= 0
+        ? (existingCopy?.code || formData.code || 'FICHA')
+        : `${formData.code || 'FICHA'}-C${copyNumber}`;
     const internalCopy: GlazeCopy = {
       copyId: existingCopy?.copyId || `${Date.now()}`,
       sourceCode: existingCopy?.sourceCode || originalData?.code || formData.code || '',
-      name: activeCopyIndex >= 0 ? (formData.name || `Copia ${copyNumber}`) : `${formData.name} - Copia ${copyNumber}`,
-      code: baseCode,
+      name: sourceName,
+      code: sourceCode,
       mainImage: formData.mainImage || '',
       gallery: [...(formData.gallery || [])],
       finish: formData.finish || '',
@@ -1080,17 +1131,18 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       internalCopy.inventoryLevel = formData.inventoryLevel;
     }
 
+    // Módulos técnicos ampliados (se conservan tal cual del formulario).
+    internalCopy.techSpecs = formData.techSpecs;
+    internalCopy.preparation = formData.preparation;
+    internalCopy.firingCurve = formData.firingCurve;
+    internalCopy.analysis = formData.analysis;
+    internalCopy.application = formData.application;
+    internalCopy.safety = formData.safety;
+
     return internalCopy;
   };
 
   const isRepositoryStatus = (status: GlazeStatus) => status === 'validated' || status === 'published';
-
-  const moveCopyToDraft = (copy: GlazeCopy): GlazeCopy => ({
-    ...copy,
-    status: 'draft',
-    isValidated: false,
-    updatedAt: new Date(),
-  });
 
   const loadSourceFormula = async () => {
     setSourceLoading(true);
@@ -1112,7 +1164,6 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
       setCodeManuallyEdited(true);
       setCalcMode('grams');
-      setTargetWeight(importedRecipe.totalBase || 100);
       setFormData({
         ...formData,
         ...importedGlaze,
@@ -1268,6 +1319,54 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
   const getAmountInputValue = (amount: number) => (amount === 0 ? '' : amount);
 
+  const handleRecipeExtraction = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setImageError('Selecciona un archivo de imagen válido.');
+      return;
+    }
+
+    setImageExtracting(true);
+    setImageError('');
+    setImageMessage('');
+
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+    if (!apiKey) {
+      setImageError('Falta la clave de Gemini. Configúrala como VITE_GEMINI_API_KEY en el archivo .env.local.');
+      setImageExtracting(false);
+      return;
+    }
+
+    try {
+      const result = await extractRecipeFromImage(file, apiKey);
+      if (!result.ok || !result.data) {
+        setImageError(result.error || 'No pude leer la fórmula de esa imagen.');
+        return;
+      }
+
+      const built = extractionToRecipe(result.data);
+      const usesPercent =
+        result.data.base.some((line) => line.unit === '%') || result.data.additional.some((line) => line.unit === '%');
+
+      setCalcMode(usesPercent ? 'percent' : 'grams');
+      setFormData((prev) => ({
+        ...prev,
+        ...(result.data.name ? { name: result.data.name } : {}),
+        recipe: built,
+      }));
+      setImageMessage(
+        `Fórmula leída: ${built.base.length} materiales de base${built.additional.length ? ` y ${built.additional.length} extras` : ''}. Revisa y guarda la ficha.`,
+      );
+    } catch (error) {
+      setImageError(error instanceof Error ? error.message : 'Error inesperado al leer la imagen.');
+    } finally {
+      setImageExtracting(false);
+    }
+  };
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, targetIdx?: number) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1398,7 +1497,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
       const nextCopyNumber = currentCopies.length + 1;
       const internalCopy = {
-        ...buildCopyFromActiveForm(nextCopyNumber),
+        ...buildCopyFromActiveForm(nextCopyNumber, undefined, true),
         status: 'draft' as GlazeStatus,
         isValidated: false,
       };
@@ -1407,23 +1506,25 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         ...(freshOriginalData || originalData || formData),
         copies: nextCopies,
       } as Glaze;
-      await setDoc(doc(db, 'glazes', glazeId), {
+      await setDoc(doc(db, 'glazes', glazeId), sanitizeForFirestore({
         ...nextOriginalData,
         copies: nextCopies,
         updatedAt: serverTimestamp(),
-      });
+      }));
 
       setOriginalData(nextOriginalData);
       setFormData({ ...internalCopy, copies: nextCopies });
       setActiveCopyIndex(nextCopies.length - 1);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'glazes');
+      console.error('Error duplicando la ficha:', error);
+      const raw = error instanceof Error ? error.message : String(error);
+      alert(`No se pudo duplicar la ficha. ${raw}`);
     } finally {
       setDuplicating(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, forcedStatus?: GlazeStatus) => {
     e.preventDefault();
     if (codeDuplicate) return;
     setLoading(true);
@@ -1439,60 +1540,171 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       const data = {
         ...formData,
         recipe,
+        ...(forcedStatus ? { status: forcedStatus, isValidated: forcedStatus === 'validated' || forcedStatus === 'published' } : {}),
         authorId: auth.currentUser?.uid,
         authorName: auth.currentUser?.displayName || 'Anónimo',
         updatedAt: serverTimestamp(),
         createdAt: formData.createdAt || serverTimestamp(),
       };
+      const cleanData = sanitizeForFirestore(data);
+      // Estado que reflejará la ficha tras el guardado (para el baseline).
+      let savedSnapshot: Partial<Glaze> = formData;
 
-      if (glazeId && activeCopyIndex >= 0 && originalData) {
+      if (effectiveId && activeCopyIndex >= 0 && originalData) {
         const nextCopies = [...(originalData.copies || [])];
         const activeCopyData = buildCopyFromActiveForm(activeCopyIndex + 1, nextCopies[activeCopyIndex]);
         nextCopies[activeCopyIndex] = activeCopyData;
         const nextOriginalData = {
           ...originalData,
-          status: isRepositoryStatus(activeCopyData.status) ? 'draft' as GlazeStatus : originalData.status,
-          isValidated: isRepositoryStatus(activeCopyData.status) ? false : originalData.isValidated,
-          copies: isRepositoryStatus(activeCopyData.status)
-            ? nextCopies.map((copy, index) => index === activeCopyIndex ? { ...copy, isValidated: true } : moveCopyToDraft(copy))
-            : nextCopies,
+          copies: nextCopies,
           updatedAt: new Date(),
         };
         const savedActiveCopy = nextOriginalData.copies[activeCopyIndex];
 
-        await setDoc(doc(db, 'glazes', glazeId), {
+        await setDoc(doc(db, 'glazes', effectiveId), sanitizeForFirestore({
           ...nextOriginalData,
           updatedAt: serverTimestamp(),
-        });
+        }));
         setOriginalData(nextOriginalData);
-        setFormData({ ...savedActiveCopy, copies: nextOriginalData.copies });
-      } else if (glazeId) {
+        savedSnapshot = { ...savedActiveCopy, copies: nextOriginalData.copies };
+        setFormData(savedSnapshot);
+      } else if (effectiveId) {
         const freshOriginalData = await getFreshOriginalData();
         const currentCopies = freshOriginalData?.copies || originalData?.copies || [];
         const nextData = {
-          ...data,
-          isValidated: isRepositoryStatus(data.status),
-          copies: isRepositoryStatus(data.status)
-            ? currentCopies.map(moveCopyToDraft)
-            : currentCopies,
+          ...cleanData,
+          isValidated: isRepositoryStatus(cleanData.status),
+          copies: currentCopies,
         } as Glaze;
-        await setDoc(doc(db, 'glazes', glazeId), nextData);
+        await setDoc(doc(db, 'glazes', effectiveId), sanitizeForFirestore(nextData));
         setOriginalData(nextData);
       } else {
-        await addDoc(collection(db, 'glazes'), data);
+        const newDoc = await addDoc(collection(db, 'glazes'), sanitizeForFirestore(cleanData));
+        // Guardamos el id para que un segundo guardado actualice la ficha
+        // recién creada en lugar de insertar un duplicado.
+        savedGlazeIdRef.current = newDoc.id;
       }
-      onSuccess();
+      // Registro de actividad para el historial del dashboard. No bloquea el guardado.
+      const savedId = effectiveId ?? savedGlazeIdRef.current;
+      if (savedId) {
+        try {
+          await addDoc(collection(db, 'activity'), {
+            type: 'edit',
+            glazeId: savedId,
+            name: formData.name,
+            code: formData.code,
+            byName: auth.currentUser?.displayName || 'Anónimo',
+            at: serverTimestamp(),
+          });
+        } catch (e) {
+          console.error('Error registrando actividad:', e);
+        }
+      }
+      // Tras guardar, la ficha NO se cierra: se mantiene abierta para seguir
+      // editando. Se actualiza el baseline para que el estado quede "limpiado".
+      baselineRef.current = JSON.stringify(sanitizeForFirestore(savedSnapshot));
+      setDirty(false);
+      setLastSaved(true);
+      window.setTimeout(() => setLastSaved(false), 3000);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'glazes');
+      console.error('Error guardando la ficha:', error);
+      const raw = error instanceof Error ? error.message : String(error);
+      const isUndefined = /undefined/i.test(raw);
+      alert(
+        isUndefined
+          ? 'Error al guardar: hay un campo con valor indefinido (undefined). Revisa los módulos técnicos.'
+          : `No se pudo guardar la ficha. ${raw}`,
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  const storedCopies = getStoredCopies();
+  const saveMenuOptions = [
+    { value: 'repository', label: 'Repositorio', icon: Save },
+    { value: 'draft', label: 'Borrador', icon: Copy },
+    { value: 'formuladas', label: 'Formuladas', icon: FolderOpen },
+  ];
+
+  const handleSaveTo = async (target: string) => {
+    setSaveMenuOpen(false);
+    if (!auth.currentUser) {
+      alert('Debes iniciar sesión para guardar la ficha.');
+      return;
+    }
+    setSaveSaving(target);
+    try {
+      // 'formuladas' guarda una copia en el área personal del usuario (fuera
+      // del repositorio), sin tocar la ficha original.
+      if (target === 'formuladas') {
+        const recipe = formData.recipe
+          ? syncRecipeTotals({
+              ...formData.recipe,
+              base: [...formData.recipe.base],
+              additional: [...formData.recipe.additional],
+            })
+          : undefined;
+        const uid = auth.currentUser.uid;
+        const cleanData = sanitizeForFirestore(formData);
+        const id = (effectiveId || savedGlazeIdRef.current) ?? null;
+        const payload = {
+          ...cleanData,
+          recipe,
+          copies: undefined as unknown,
+          status: 'draft',
+          isValidated: false,
+          scope: 'formuladas',
+          sourceGlazeId: id,
+          sourceCode: formData.code || 'FICHA',
+          authorId: auth.currentUser.uid,
+          authorName: auth.currentUser.displayName || 'Anónimo',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+        await addDoc(collection(db, `formuladas/${uid}/items`), sanitizeForFirestore(payload));
+        try {
+          await addDoc(collection(db, 'activity'), {
+            type: 'edit',
+            glazeId: id || '',
+            name: formData.name,
+            code: formData.code,
+            area: true,
+            byName: auth.currentUser.displayName || 'Anónimo',
+            at: serverTimestamp(),
+          });
+        } catch (error) {
+          console.error('Error registrando actividad:', error);
+        }
+        setFlashMessage('Ficha guardada en tus Formuladas');
+        return;
+      }
+
+      // 'repository' y 'draft' realizan el guardado estándar en glazes.
+      // 'draft' fuerza el estado borrador; 'repository' respeta el del formulario.
+      await handleSubmit(
+        { preventDefault: () => {} } as React.FormEvent,
+        target === 'draft' ? 'draft' : undefined,
+      );
+      if (target === 'draft') {
+        setFlashMessage('Ficha guardada como borrador');
+      }
+    } catch (error) {
+      console.error('Error guardando en sección:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo guardar la ficha en esa sección.');
+    } finally {
+      setSaveSaving(null);
+    }
+  };
+
+  const [flashMessage, setFlashMessage] = useState('');
+  useEffect(() => {
+    if (!flashMessage) return;
+    const timer = window.setTimeout(() => setFlashMessage(''), 2600);
+    return () => window.clearTimeout(timer);
+  }, [flashMessage]);
   const activeCopy = activeCopyIndex >= 0 && formData.recipe ? formData as GlazeCopy : null;
-  const showOnlyActiveVersion = isRepositoryStatus(formData.status);
-  const copySelectorIndexes = showOnlyActiveVersion && activeCopyIndex >= 0 ? [activeCopyIndex] : [0, 1, 2];
+  const copySelectorIndexes = [0, 1, 2];
+  const storedCopies = getStoredCopies();
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
@@ -1504,7 +1716,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         </div>
         {glazeId && (
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#E4E4E2] bg-white p-2 shadow-sm">
-            {(!showOnlyActiveVersion || activeCopyIndex === -1) && (
+            {(
               <button
                 type="button"
                 onClick={selectOriginal}
@@ -1541,7 +1753,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex flex-wrap gap-3">
           <div className="flex min-w-[280px] flex-1 flex-col gap-2 sm:max-w-[520px]">
-            <div className="flex overflow-hidden rounded-xl border border-red-200 bg-white shadow-sm">
+<div className="flex overflow-hidden rounded-xl border border-red-200 bg-white shadow-sm">
               <input
                 type="url"
                 value={sourceUrl}
@@ -1579,9 +1791,42 @@ Subir Excel (URLs o tablas)
                 onChange={handleBulkSourceImport}
               />
             </label>
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#E4E4E2] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-[#8a168a] transition-all hover:border-[#8a168a] hover:bg-[#FAF5FA]">
+              {imageExtracting ? <Spinner className="h-4 w-4 animate-spin" /> : <ImageIcon size={16} />}
+              {imageExtracting ? 'Leyendo fórmula con IA...' : 'Subir imagen y leer fórmula (IA)'}
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={imageExtracting}
+                onChange={handleRecipeExtraction}
+              />
+            </label>
+            {imageError && (
+              <p className="text-xs font-medium text-red-600">{imageError}</p>
+            )}
+            {imageMessage && (
+              <p className="text-xs font-medium text-[#636E72]">{imageMessage}</p>
+            )}
           </div>
           </div>
           <div className="flex flex-wrap justify-end gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (dirty) {
+                const confirmed = window.confirm(
+                  'Tienes cambios sin guardar. ¿Quieres cerrar la ficha sin guardar?',
+                );
+                if (!confirmed) return;
+              }
+              onCancel();
+            }}
+            className="rounded-xl border border-[#E4E4E2] px-6 py-2.5 text-sm font-medium hover:bg-white"
+          >
+            Cerrar
+          </button>
           {glazeId && (
             <button
               type="button"
@@ -1604,9 +1849,18 @@ Subir Excel (URLs o tablas)
               {activeCopyIndex >= 0 ? 'Eliminar Copia' : 'Eliminar'}
             </button>
           )}
-          <button type="button" onClick={onCancel} className="rounded-xl border border-[#E4E4E2] px-6 py-2.5 text-sm font-medium hover:bg-white">
-            Cancelar
-          </button>
+          {lastSaved && (
+            <span className="flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700">
+              <CheckCircle2 size={18} />
+              Ficha guardada
+            </span>
+          )}
+          {flashMessage && (
+            <span className="flex items-center gap-2 rounded-xl bg-purple-50 px-4 py-2.5 text-sm font-medium text-purple-700">
+              <CheckCircle2 size={18} />
+              {flashMessage}
+            </span>
+          )}
           <button 
             type="submit" 
             disabled={loading || codeDuplicate}
@@ -1615,6 +1869,55 @@ Subir Excel (URLs o tablas)
             {loading ? <Spinner className="h-4 w-4 animate-spin" /> : <Save size={18} />}
             Guardar Ficha
           </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setSaveMenuOpen((prev) => !prev)}
+              className="flex items-center gap-1 rounded-xl border border-[#E4E4E2] px-3 py-2.5 text-sm font-medium text-[#2D3436] hover:bg-[#F7F7F5]"
+              aria-haspopup="menu"
+              aria-expanded={saveMenuOpen}
+            >
+              <ChevronDown size={16} />
+            </button>
+            <AnimatePresence>
+              {saveMenuOpen && (
+                <>
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-40"
+                    onClick={() => setSaveMenuOpen(false)}
+                  />
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                    className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-2xl border border-[#E4E4E2] bg-white shadow-xl"
+                    role="menu"
+                  >
+                    {saveMenuOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        disabled={saveSaving === option.value}
+                        onClick={() => handleSaveTo(option.value)}
+                        role="menuitem"
+                        className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-[#2D3436] transition-colors hover:bg-[#F7F7F5] disabled:opacity-50"
+                      >
+                        {saveSaving === option.value ? (
+                          <Spinner className="h-4 w-4 animate-spin text-[#8a168a]" />
+                        ) : (
+                          <option.icon size={16} className="text-[#8a168a]" />
+                        )}
+                        <span>Guardar en {option.label}</span>
+                      </button>
+                    ))}
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
         </div>
       </div>
@@ -1855,21 +2158,31 @@ Subir Excel (URLs o tablas)
                 <h4 className="text-lg font-semibold tracking-tight">Módulo de Receta</h4>
                 <p className="text-xs text-[#636E72]">Cálculo inteligente de base y adicionales.</p>
               </div>
-              <div className="flex w-full items-center gap-2 rounded-xl bg-[#F4F4F2] p-1 sm:w-auto">
-                <button 
+              <div className="flex flex-wrap items-center gap-2">
+                <button
                   type="button"
-                  onClick={() => setCalcMode('percent')}
-                  className={cn("flex-1 rounded-lg px-4 py-1.5 text-xs font-medium transition-all sm:flex-none", calcMode === 'percent' ? "bg-white text-[#2D3436] shadow-sm" : "text-[#636E72]")}
+                  onClick={() => setShowRecalculo(true)}
+                  className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition-all hover:bg-red-700"
                 >
-                  Porcentaje (%)
+                  <RefreshCcw size={14} />
+                  Recálculo
                 </button>
-                <button 
-                  type="button"
-                  onClick={() => setCalcMode('grams')}
-                  className={cn("flex-1 rounded-lg px-4 py-1.5 text-xs font-medium transition-all sm:flex-none", calcMode === 'grams' ? "bg-white text-[#2D3436] shadow-sm" : "text-[#636E72]")}
-                >
-                  Gramos (g)
-                </button>
+                <div className="flex w-full items-center gap-2 rounded-xl bg-[#F4F4F2] p-1 sm:w-auto">
+                  <button 
+                    type="button"
+                    onClick={() => setCalcMode('percent')}
+                    className={cn("flex-1 rounded-lg px-4 py-1.5 text-xs font-medium transition-all sm:flex-none", calcMode === 'percent' ? "bg-white text-[#2D3436] shadow-sm" : "text-[#636E72]")}
+                  >
+                    Porcentaje (%)
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setCalcMode('grams')}
+                    className={cn("flex-1 rounded-lg px-4 py-1.5 text-xs font-medium transition-all sm:flex-none", calcMode === 'grams' ? "bg-white text-[#2D3436] shadow-sm" : "text-[#636E72]")}
+                  >
+                    Gramos (g)
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1947,64 +2260,6 @@ Subir Excel (URLs o tablas)
                 ))}
               </div>
             </div>
-
-            <div className="rounded-2xl border border-[#E4E4E2] p-6 space-y-4">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Calculator size={18} />
-                Reescalado Proporcional
-              </div>
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-                <div className="flex-1 space-y-1">
-                  <p className="text-[11px] font-bold uppercase tracking-widest text-[#8a168a]">Nuevo Peso Total Base</p>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <input 
-                      type="number"
-                      inputMode="decimal"
-                      value={targetWeight}
-                      onChange={e => setTargetWeight(parseFloat(e.target.value) || 0)}
-                      className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2 text-sm outline-none focus:border-[#2D3436] focus:bg-white" 
-                    />
-                    <button 
-                      type="button"
-                      onClick={handleRescale}
-                      className="rounded-xl bg-[#2D3436] px-4 py-2 text-xs font-bold text-white hover:bg-black sm:min-w-[96px]"
-                    >
-                      Ajustar
-                    </button>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2 sm:pt-5">
-                  <button 
-                    type="button" 
-                    onClick={() => setTargetWeight(prev => Math.max(0, Math.round((baseTotal * 0.9) * 10) / 10))}
-                    className="rounded-lg border border-[#E4E4E2] px-3 py-1 text-[10px] font-bold hover:bg-[#F7F7F5]"
-                  >
-                    -10%
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={() => setTargetWeight(prev => Math.round((baseTotal * 1.1) * 10) / 10)}
-                    className="rounded-lg border border-[#E4E4E2] px-3 py-1 text-[10px] font-bold hover:bg-[#F7F7F5]"
-                  >
-                    +10%
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={() => setTargetWeight(prev => Math.max(0, Math.round((prev - 10) * 10) / 10))}
-                    className="rounded-lg border border-[#E4E4E2] px-3 py-1 text-[10px] font-bold hover:bg-[#F7F7F5]"
-                  >
-                    -10g
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={() => setTargetWeight(prev => Math.round((prev + 10) * 10) / 10)}
-                    className="rounded-lg border border-[#E4E4E2] px-3 py-1 text-[10px] font-bold hover:bg-[#F7F7F5]"
-                  >
-                    +10g
-                  </button>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -2028,7 +2283,20 @@ Subir Excel (URLs o tablas)
             </div>
             <div className="group relative aspect-square overflow-hidden rounded-2xl bg-[#F7F7F5] border-2 border-dashed border-[#E4E4E2] flex flex-col items-center justify-center text-[#B2BEC3] hover:border-[#2D3436] hover:text-[#2D3436] transition-all">
               {formData.mainImage ? (
-                <img src={formData.mainImage} className="h-full w-full object-cover" alt="Preview" referrerPolicy="no-referrer" />
+                <>
+                  <img src={formData.mainImage} className="h-full w-full object-cover" alt="Preview" referrerPolicy="no-referrer" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!window.confirm('¿Estás seguro de que quieres eliminar esta foto?')) return;
+                      setFormData({ ...formData, mainImage: '' });
+                    }}
+                    className="absolute right-3 top-3 flex items-center gap-1.5 rounded-lg bg-white/90 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-red-500 shadow-sm backdrop-blur-sm transition-all hover:bg-red-500 hover:text-white"
+                  >
+                    <Trash2 size={12} />
+                    Eliminar
+                  </button>
+                </>
               ) : (
                 <>
                   <ImageIcon size={40} strokeWidth={1} />
@@ -2158,6 +2426,17 @@ Subir Excel (URLs o tablas)
           </div>
         </div>
       </div>
+
+      <RecalculoModal
+        open={showRecalculo}
+        onClose={() => setShowRecalculo(false)}
+        recipe={formData.recipe || { base: [], additional: [] }}
+        onApply={(result) => {
+          const recipe = buildRecalculatedRecipe(result);
+          setFormData((prev) => ({ ...prev, recipe }));
+          setShowRecalculo(false);
+        }}
+      />
     </form>
   );
 }

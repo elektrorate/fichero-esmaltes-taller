@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
-import { db, OperationType, handleFirestoreError } from '../lib/firebase';
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth, OperationType, handleFirestoreError } from '../lib/firebase';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc, getDoc, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Glaze, GlazeStatus, UserProfile } from '../types';
 import { STATUS_LABELS, ORTON_CONES, matchesOrtonCone } from '../constants';
 import { generateBulkPDF } from '../lib/pdfUtils';
 import { motion, AnimatePresence } from 'motion/react';
-import { Edit2, Eye, MoreVertical, Tag, FileDown, CheckSquare, Square, Download, X, Check, Loader2, Filter, RotateCcw, Trash2 } from 'lucide-react';
+import { Edit2, Eye, MoreVertical, Tag, FileDown, CheckSquare, Square, Download, X, Check, Loader2, Filter, RotateCcw, Trash2, Search } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const FILTER_OPTIONS = {
@@ -20,6 +20,8 @@ interface GlazeListProps {
   activeFilters?: any;
   statusScope?: GlazeStatus[];
   highlightInventoryAlerts?: boolean;
+  showStatusFilter?: boolean;
+  showDraftCopies?: boolean;
   profile?: UserProfile | null;
   onSelect: (id: string, copyIndex?: number | null) => void;
   onEdit: (id: string, copyIndex?: number | null) => void;
@@ -32,7 +34,13 @@ type DisplayGlaze = Glaze & {
   isCopy: boolean;
 };
 
-const isRepositoryStatus = (status: GlazeStatus) => status === 'validated' || status === 'published';
+const STATUS_BADGE_STYLES: Record<GlazeStatus, string> = {
+  draft: 'bg-gray-900/80 text-white',
+  pending: 'bg-amber-500/90 text-white',
+  validated: 'bg-emerald-600/90 text-white',
+  published: 'bg-emerald-700/90 text-white',
+  archived: 'bg-red-600/90 text-white'
+};
 
 const getSortableDate = (value: any) => {
   if (!value) return 0;
@@ -46,6 +54,8 @@ export default function GlazeList({
   activeFilters = {},
   statusScope,
   highlightInventoryAlerts = false,
+  showStatusFilter = false,
+  showDraftCopies = false,
   profile = null,
   onSelect,
   onEdit
@@ -56,12 +66,15 @@ export default function GlazeList({
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSendingToFormuladas, setIsSendingToFormuladas] = useState(false);
 
   const [filterColor, setFilterColor] = useState('');
   const [filterFinish, setFilterFinish] = useState('');
   const [filterTexture, setFilterTexture] = useState('');
   const [filterUsage, setFilterUsage] = useState('');
   const [filterTemperature, setFilterTemperature] = useState('');
+  const [localSearch, setLocalSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState<GlazeStatus | ''>('');
 
   useEffect(() => {
     const q = query(collection(db, 'glazes'), orderBy('createdAt', 'desc'));
@@ -78,7 +91,7 @@ export default function GlazeList({
     );
   };
 
-  const hasActiveFilters = filterColor || filterFinish || filterTexture || filterUsage || filterTemperature;
+  const hasActiveFilters = filterColor || filterFinish || filterTexture || filterUsage || filterTemperature || localSearch || filterStatus;
 
   const clearFilters = () => {
     setFilterColor('');
@@ -86,6 +99,8 @@ export default function GlazeList({
     setFilterTexture('');
     setFilterUsage('');
     setFilterTemperature('');
+    setLocalSearch('');
+    setFilterStatus('');
   };
 
   const displayGlazes: DisplayGlaze[] = glazes.flatMap((glaze) => {
@@ -100,7 +115,7 @@ export default function GlazeList({
     };
 
     const copies = (glaze.copies || []).flatMap((copy, index) => {
-      if (copy.status !== 'published') return [];
+      if (copy.status !== 'published' && !(showDraftCopies && (copy.status === 'draft' || copy.status === 'pending'))) return [];
 
       return [{
         ...glaze,
@@ -118,10 +133,10 @@ export default function GlazeList({
   });
 
   const baseFilteredGlazes = displayGlazes.filter(glaze => {
-    if (searchQuery) {
-      const lowerQuery = searchQuery.toLowerCase();
-      const matchesName = glaze.name.toLowerCase().includes(lowerQuery);
-      const matchesCode = glaze.code?.toLowerCase().includes(lowerQuery);
+    const effectiveQuery = (localSearch || searchQuery || '').toLowerCase();
+    if (effectiveQuery) {
+      const matchesName = glaze.name.toLowerCase().includes(effectiveQuery);
+      const matchesCode = glaze.code?.toLowerCase().includes(effectiveQuery);
       if (!matchesName && !matchesCode) return false;
     }
 
@@ -131,7 +146,9 @@ export default function GlazeList({
     if (filterUsage && (!glaze.usage || !glaze.usage.includes(filterUsage))) return false;
     if (filterTemperature && !matchesOrtonCone(glaze.temperature, filterTemperature)) return false;
 
-    if (statusScope && !statusScope.includes(glaze.status)) return false;
+    if (showStatusFilter && filterStatus && glaze.status !== filterStatus) return false;
+
+    if (statusScope && !(showStatusFilter && filterStatus) && !statusScope.includes(glaze.status)) return false;
 
     if (activeFilters.color && glaze.color !== activeFilters.color) return false;
     if (activeFilters.finish && glaze.finish !== activeFilters.finish) return false;
@@ -143,20 +160,7 @@ export default function GlazeList({
     return true;
   });
 
-  const filteredGlazes = statusScope?.some(isRepositoryStatus)
-    ? Object.values(
-        baseFilteredGlazes.reduce<Record<string, DisplayGlaze>>((officialByParent, glaze) => {
-          if (!isRepositoryStatus(glaze.status)) return officialByParent;
-          const current = officialByParent[glaze.parentId];
-          const currentDate = getSortableDate(current?.updatedAt || current?.createdAt);
-          const nextDate = getSortableDate(glaze.updatedAt || glaze.createdAt);
-          if (!current || nextDate >= currentDate) {
-            officialByParent[glaze.parentId] = glaze;
-          }
-          return officialByParent;
-        }, {})
-      )
-    : baseFilteredGlazes;
+  const filteredGlazes = baseFilteredGlazes;
   const inventoryAlertThreshold = 25;
   const alertGlazes = filteredGlazes.filter(
     glaze => glaze.inventoryLevel !== undefined && glaze.inventoryLevel <= inventoryAlertThreshold
@@ -164,6 +168,14 @@ export default function GlazeList({
   const regularGlazes = filteredGlazes.filter(
     glaze => glaze.inventoryLevel === undefined || glaze.inventoryLevel > inventoryAlertThreshold
   );
+
+  // Ordena por fecha de última edición/guardado (más reciente primero) para que,
+  // tras guardar una ficha, aparezca la primera en el listado.
+  const byRecentFirst = (a: DisplayGlaze, b: DisplayGlaze) =>
+    getSortableDate(b.updatedAt || b.createdAt) - getSortableDate(a.updatedAt || a.createdAt);
+  const sortedAlertGlazes = [...alertGlazes].sort(byRecentFirst);
+  const sortedRegularGlazes = [...regularGlazes].sort(byRecentFirst);
+  const sortedFilteredGlazes = [...filteredGlazes].sort(byRecentFirst);
 
   const handleBulkExport = async () => {
     const selectedGlazes = filteredGlazes.filter(g => selectedIds.includes(g.displayId));
@@ -219,6 +231,42 @@ export default function GlazeList({
     }
   };
 
+  const handleBulkSendToFormuladas = async () => {
+    const targets = filteredGlazes.filter(g => selectedIds.includes(g.displayId));
+    if (targets.length === 0) return;
+    if (!auth.currentUser) {
+      alert('Debes iniciar sesión para enviar fichas a Formuladas.');
+      return;
+    }
+    setIsSendingToFormuladas(true);
+    try {
+      const uid = auth.currentUser.uid;
+      await Promise.all(targets.map(async (glaze) => {
+        await addDoc(collection(db, `formuladas/${uid}/items`), {
+          ...glaze,
+          id: undefined,
+          copies: undefined,
+          status: 'draft',
+          isValidated: false,
+          scope: 'formuladas',
+          sourceGlazeId: glaze.parentId,
+          sourceCode: glaze.code || 'FICHA',
+          authorId: uid,
+          authorName: auth.currentUser?.displayName || 'Anónimo',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }));
+      setIsSelectionMode(false);
+      setSelectedIds([]);
+    } catch (error) {
+      console.error('Error enviando a Formuladas:', error);
+      handleFirestoreError(error, OperationType.CREATE, 'formuladas');
+    } finally {
+      setIsSendingToFormuladas(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex justify-center py-20 text-[#636E72]">Cargando repositorio...</div>;
   }
@@ -260,6 +308,28 @@ export default function GlazeList({
                   <>
                     <Download size={18} />
                     Exportar PDF ({selectedIds.length})
+                  </>
+                )}
+              </motion.button>
+            )}
+            {isSelectionMode && selectedIds.length > 0 && profile?.role === 'admin' && (
+              <motion.button
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                onClick={handleBulkSendToFormuladas}
+                disabled={isSendingToFormuladas}
+                className="flex items-center gap-2 rounded-xl bg-[#8a168a] px-4 py-2 text-sm font-medium text-white hover:bg-[#6d0f6d] disabled:opacity-70"
+              >
+                {isSendingToFormuladas ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Enviando...
+                  </>
+                ) : (
+                  <>
+                    <Tag size={18} />
+                    Enviar a Formuladas ({selectedIds.length})
                   </>
                 )}
               </motion.button>
@@ -312,6 +382,31 @@ export default function GlazeList({
           <Filter size={16} />
           <span className="text-[11px] font-bold uppercase tracking-widest">Filtros</span>
         </div>
+        {showStatusFilter && (
+          <>
+            <div className="relative">
+              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#98A2AD]" />
+              <input
+                type="text"
+                value={localSearch}
+                onChange={e => setLocalSearch(e.target.value)}
+                placeholder="Buscar por nombre o código..."
+                className="w-56 rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] py-2 pl-9 pr-3 text-xs font-medium outline-none transition focus:border-[#2D3436] focus:bg-white"
+              />
+            </div>
+            <select
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value as GlazeStatus | '')}
+              className="rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-3 py-2 text-xs font-medium outline-none focus:border-[#2D3436] focus:bg-white"
+            >
+              <option value="">Estado</option>
+              <option value="draft">Borrador</option>
+              <option value="pending">Pendiente</option>
+              <option value="validated">Formulado</option>
+              <option value="published">Publicado</option>
+            </select>
+          </>
+        )}
         <select
           value={filterColor}
           onChange={e => setFilterColor(e.target.value)}
@@ -389,7 +484,7 @@ export default function GlazeList({
               </div>
               {alertGlazes.length > 0 && (
                 <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-                  {alertGlazes.map((glaze, i) => (
+                  {sortedAlertGlazes.map((glaze, i) => (
                     <div key={glaze.displayId} className="rounded-[24px] ring-1 ring-red-100">
                       <motion.div
                         initial={{ opacity: 0, scale: 0.95 }}
@@ -421,6 +516,9 @@ export default function GlazeList({
                             referrerPolicy="no-referrer"
                           />
                           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+                          <span className={cn("absolute left-3 top-3 rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider shadow-lg backdrop-blur-sm", STATUS_BADGE_STYLES[glaze.status])}>
+                            {STATUS_LABELS[glaze.status]}
+                          </span>
                           {!isSelectionMode && (
                             <div className="absolute bottom-4 left-4 right-4 flex translate-y-4 items-center justify-between opacity-0 transition-all group-hover:translate-y-0 group-hover:opacity-100">
                               <div className="flex gap-2">
@@ -431,9 +529,6 @@ export default function GlazeList({
                                   <Edit2 size={18} />
                                 </button>
                               </div>
-                              <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur-md">
-                                {STATUS_LABELS[glaze.status]}
-                              </span>
                             </div>
                           )}
                         </div>
@@ -487,7 +582,7 @@ export default function GlazeList({
               <h3 className="text-sm font-semibold uppercase tracking-wider text-[#636E72]">Resto del Inventario</h3>
             )}
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {(highlightInventoryAlerts ? regularGlazes : filteredGlazes).map((glaze, i) => (
+              {(highlightInventoryAlerts ? sortedRegularGlazes : sortedFilteredGlazes).map((glaze, i) => (
           <motion.div
             key={glaze.displayId}
             initial={{ opacity: 0, scale: 0.95 }}
@@ -527,6 +622,9 @@ export default function GlazeList({
                 referrerPolicy="no-referrer"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+              <span className={cn("absolute left-3 top-3 rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider shadow-lg backdrop-blur-sm", STATUS_BADGE_STYLES[glaze.status])}>
+                {STATUS_LABELS[glaze.status]}
+              </span>
               
               {!isSelectionMode && (
                 <div className="absolute bottom-4 left-4 right-4 flex translate-y-4 items-center justify-between opacity-0 transition-all group-hover:translate-y-0 group-hover:opacity-100">
@@ -544,9 +642,6 @@ export default function GlazeList({
                       <Edit2 size={18} />
                     </button>
                   </div>
-                  <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur-md">
-                    {STATUS_LABELS[glaze.status]}
-                  </span>
                 </div>
               )}
             </div>

@@ -1,6 +1,9 @@
 import jsPDF from 'jspdf';
 import { Glaze, FiringSegment } from '../types';
 import { STATUS_LABELS } from '../constants';
+import { computeCurve } from '../firingCurve/engine';
+import { firingCurveToProgram } from '../firingCurve/glazeToProgram';
+import { buildCurveSvg, svgToPngDataUrl } from '../firingCurve/svgChart';
 
 const loadImage = (url: string): Promise<HTMLImageElement> => {
   return new Promise((resolve, reject) => {
@@ -164,6 +167,50 @@ const renderSegmentsTable = (
   return y + 5;
 };
 
+// Dibuja una lista de fotos en una cuadrícula de varias columnas dentro del PDF.
+const renderPhotoGrid = async (
+  doc: jsPDF,
+  title: string,
+  photos: string[],
+  x: number,
+  y: number
+): Promise<number> => {
+  if (!photos.length) return y;
+  y = ensureSpace(doc, y, 16);
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const maxWidth = pageWidth - 30;
+  y = addHeading(doc, title, x, y);
+  const cols = 3;
+  const gap = 5;
+  const cellW = (maxWidth - gap * (cols - 1)) / cols;
+  const cellH = 55;
+  let col = 0;
+  let rowY = y;
+  for (const url of photos) {
+    let image: HTMLImageElement;
+    try {
+      image = await loadImage(url);
+    } catch (error) {
+      console.error('Error adding photo to PDF:', error);
+      continue;
+    }
+    const ratio = Math.min(cellW / image.width, cellH / image.height, 1);
+    const w = image.width * ratio;
+    const h = image.height * ratio;
+    const cellX = x + col * (cellW + gap);
+    rowY = ensureSpace(doc, rowY, cellH + 6);
+    const dataUrl = imageToDataUrl(image);
+    doc.addImage(dataUrl, 'JPEG', cellX + (cellW - w) / 2, rowY + (cellH - h) / 2, w, h);
+    col += 1;
+    if (col >= cols) {
+      col = 0;
+      rowY += cellH + 6;
+    }
+  }
+  if (col !== 0) rowY += cellH + 6;
+  return rowY + 6;
+};
+
 const renderApplicationPhotos = async (
   doc: jsPDF,
   photos: Array<{ url: string; caption?: string }>,
@@ -288,6 +335,26 @@ const renderTechSections = async (doc: jsPDF, glaze: Glaze, startY: number): Pro
         y = addSubHeading(doc, 'Observaciones adicionales', x, y);
         y = renderRichText(doc, firingCurve.additionalNotes, x, y, maxWidth);
       }
+      // Gráfica de la curva como imagen (rasterizada desde el SVG estático).
+      const chartProgram = firingCurveToProgram(firingCurve);
+      if (chartProgram) {
+        const res = computeCurve(chartProgram);
+        if (res.ok && res.segments.length > 0) {
+          try {
+            const svg = buildCurveSvg(chartProgram, res);
+            const dataUrl = await svgToPngDataUrl(svg);
+            const chartW = maxWidth;
+            const chartH = chartW / 2; // ratio 800x400
+            y = ensureSpace(doc, y, chartH + 10);
+            y = addSubHeading(doc, 'Gráfica de la curva', x, y);
+            y += 2;
+            doc.addImage(dataUrl, 'PNG', x, y, chartW, chartH);
+            y += chartH + 6;
+          } catch (error) {
+            console.error('Error añadiendo la gráfica de la curva al PDF:', error);
+          }
+        }
+      }
       if (segments.length > 0) {
         y = addSubHeading(doc, 'Segmentos de cocción', x, y);
         y = renderSegmentsTable(doc, segments, x, y, doc.internal.pageSize.getWidth());
@@ -403,17 +470,14 @@ export const generateGlazePDF = async (glaze: Glaze) => {
   // Content
   doc.setTextColor(45, 52, 54);
   let yPos = 55;
-  
-  // Image (if exists)
-  if (glaze.mainImage) {
-    try {
-      const imgData = await getImageData(glaze.mainImage);
-      doc.addImage(imgData, 'JPEG', pageWidth - 75, yPos, 60, 45);
-    } catch (error) {
-      console.error('Error adding image to PDF:', error);
-    }
+
+  // Fotografías: imagen principal + galería completa
+  const allPhotos = [glaze.mainImage, ...(glaze.gallery || [])].filter(Boolean) as string[];
+  if (allPhotos.length > 0) {
+    yPos = await renderPhotoGrid(doc, 'Fotografías', allPhotos, 15, yPos);
+    yPos += 10;
   }
-  
+
   // Technical Details
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
@@ -493,7 +557,8 @@ export const generateGlazePDF = async (glaze: Glaze) => {
   
   yPos = await renderTechSections(doc, glaze, yPos);
   
-  doc.save(`Ficha_${glaze.code}.pdf`);
+  const safeName = (glaze.name || 'Ficha').replace(/[\\/:*?"<>|]/g, '').trim();
+  doc.save(`Ficha_${safeName}_${glaze.code}.pdf`);
 };
 
 export const generateBulkPDF = async (glazes: Glaze[]) => {

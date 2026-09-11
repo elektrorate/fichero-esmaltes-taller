@@ -101,6 +101,8 @@ export interface FiringSegment {
 export interface FiringCurve {
   name?: string;
   program?: string;
+  /** Referencia al programa de la sección «Curva de Cocción» (colección firingPrograms). */
+  programId?: string;
   finalTemperature?: number;
   finalSoak?: number;
   finalSoakUnit?: string;
