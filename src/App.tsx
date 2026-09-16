@@ -32,7 +32,6 @@ import AdminPanel from './components/AdminPanel';
 import SettingsPanel from './components/SettingsPanel';
 import FiringCurveView, { firingCurveGuard } from './components/FiringCurveView';
 import RecalculoWorkspace from './components/RecalculoWorkspace';
-import FormulatedWorkspace from './components/FormulatedWorkspace';
 
 export interface GlazeFilters {
   color?: string;
@@ -304,7 +303,7 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'repository', label: 'Repositorio', icon: Database },
     { id: 'draft-tests', label: 'Borrador pruebas', icon: FileClock },
-    { id: 'formuladas', label: 'Formuladas', icon: Layers },
+    { id: 'formuladas', label: 'Formulados', icon: Layers },
     { id: 'firing-curve', label: 'Curva de Cocción', icon: Flame },
     { id: 'create', label: 'Nueva Ficha', icon: PlusCircle },
     { id: 'admin', label: 'Administración', icon: Users, roles: ['admin'] as UserRole[] },
@@ -561,7 +560,7 @@ export default function App() {
                 <GlazeList 
                   searchQuery={searchQuery}
                   activeFilters={activeFilters}
-                  statusScope={['validated', 'published']}
+                  statusScope={['published']}
                   profile={profile}
                   onSelect={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('detail'); }} 
                   onEdit={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('create'); }}
@@ -579,7 +578,16 @@ export default function App() {
                 />
               )}
               {currentView === 'recalculo' && <RecalculoWorkspace profile={profile} />}
-              {currentView === 'formuladas' && <FormulatedWorkspace profile={profile} />}
+              {currentView === 'formuladas' && (
+                <GlazeList
+                  searchQuery={searchQuery}
+                  activeFilters={activeFilters}
+                  statusScope={['validated']}
+                  profile={profile}
+                  onSelect={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('detail'); }}
+                  onEdit={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('create'); }}
+                />
+              )}
               {currentView === 'inventory-alerts' && (
                 <GlazeList
                   searchQuery={searchQuery}
@@ -595,7 +603,16 @@ export default function App() {
                   glazeId={selectedGlazeId} 
                   initialCopyIndex={selectedCopyIndex}
                   onCancel={() => setCurrentView('repository')} 
-                  onSuccess={() => { setSelectedCopyIndex(null); setCurrentView('repository'); }}
+                  onSuccess={(status) => {
+                    setSelectedCopyIndex(null);
+                    if (status === 'validated') {
+                      setCurrentView('formuladas');
+                    } else if (status === 'draft' || status === 'pending') {
+                      setCurrentView('draft-tests');
+                    } else {
+                      setCurrentView('repository');
+                    }
+                  }}
                   onDelete={() => { setSelectedCopyIndex(null); setCurrentView('repository'); }}
                 />
               )}

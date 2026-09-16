@@ -42,6 +42,8 @@ const STATUS_BADGE_STYLES: Record<GlazeStatus, string> = {
   archived: 'bg-red-600/90 text-white'
 };
 
+const isPublishedStatus = (status: GlazeStatus) => status === 'published';
+
 const getSortableDate = (value: any) => {
   if (!value) return 0;
   if (typeof value.toDate === 'function') return value.toDate().getTime();
@@ -115,7 +117,9 @@ export default function GlazeList({
     };
 
     const copies = (glaze.copies || []).flatMap((copy, index) => {
-      if (copy.status !== 'published' && !(showDraftCopies && (copy.status === 'draft' || copy.status === 'pending'))) return [];
+      const isVisibleCatalogCopy = copy.status === 'published' || copy.status === 'validated';
+      const isVisibleDraftCopy = showDraftCopies && (copy.status === 'draft' || copy.status === 'pending');
+      if (!isVisibleCatalogCopy && !isVisibleDraftCopy) return [];
 
       return [{
         ...glaze,
@@ -160,7 +164,20 @@ export default function GlazeList({
     return true;
   });
 
-  const filteredGlazes = baseFilteredGlazes;
+  const filteredGlazes = statusScope?.some(isPublishedStatus)
+    ? Object.values(
+        baseFilteredGlazes.reduce<Record<string, DisplayGlaze>>((officialByParent, glaze) => {
+          if (!isPublishedStatus(glaze.status)) return officialByParent;
+          const current = officialByParent[glaze.parentId];
+          const currentDate = getSortableDate(current?.updatedAt || current?.createdAt);
+          const nextDate = getSortableDate(glaze.updatedAt || glaze.createdAt);
+          if (!current || nextDate >= currentDate) {
+            officialByParent[glaze.parentId] = glaze;
+          }
+          return officialByParent;
+        }, {})
+      )
+    : baseFilteredGlazes;
   const inventoryAlertThreshold = 25;
   const alertGlazes = filteredGlazes.filter(
     glaze => glaze.inventoryLevel !== undefined && glaze.inventoryLevel <= inventoryAlertThreshold

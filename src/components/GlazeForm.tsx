@@ -40,7 +40,7 @@ interface GlazeFormProps {
   glazeId: string | null;
   initialCopyIndex?: number | null;
   onCancel: () => void;
-  onSuccess: () => void;
+  onSuccess: (status?: GlazeStatus) => void;
   onDelete: (id: string) => void;
 }
 
@@ -1142,7 +1142,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     return internalCopy;
   };
 
-  const isRepositoryStatus = (status: GlazeStatus) => status === 'validated' || status === 'published';
+  const isCatalogStatus = (status: GlazeStatus) => status === 'validated' || status === 'published';
 
   const loadSourceFormula = async () => {
     setSourceLoading(true);
@@ -1179,7 +1179,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
   const extractGlazyUrlsFromWorkbook = (workbook: XLSX.WorkBook) => {
     const urls = new Set<string>();
-    const urlPattern = /(?:https?:\/\/)?(?:www\.)?glazy\.org\/recipes\/(\d+)/gi;
+    const urlPattern = /(?:https?:\/\/)?(?:www\.)?glazy\.org\/(?:recipes|materials)\/(\d+)/gi;
     const recipeIdPattern = /^\s*(\d{5,9})\s*$/;
 
     const collectUrl = (value: unknown) => {
@@ -1215,9 +1215,15 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       for (let row = range.s.r; row <= range.e.r; row += 1) {
         for (let col = range.s.c; col <= range.e.c; col += 1) {
           const cell = sheet[XLSX.utils.encode_cell({ r: row, c: col })];
+          if (!cell) continue;
           collectUrl(cell?.v);
           collectUrl(cell?.w);
+          collectUrl(cell?.f);
+          collectUrl(cell?.h);
+          collectUrl(cell?.r);
           collectUrl(cell?.l?.Target);
+          collectUrl(cell?.l?.Tooltip);
+          Object.values(cell || {}).forEach(collectUrl);
         }
       }
     });
@@ -1244,7 +1250,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       const total = urls.length + tables.length;
       if (total === 0) {
         setBulkImportMessage('');
-        setSourceError(`No leí fichas de ese archivo. ${diagnostics.join(' ')} Revisa que la tabla tenga un encabezado con columnas como Nombre, Código, Materia 1/ Cantidad 1.`);
+        setSourceError(`No leí fichas de ese archivo. ${diagnostics.join(' ')} Revisa que tenga URLs de Glazy o una tabla con columnas como Nombre, Código, Materia 1 / Cantidad 1.`);
         return;
       }
 
@@ -1554,9 +1560,16 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         const nextCopies = [...(originalData.copies || [])];
         const activeCopyData = buildCopyFromActiveForm(activeCopyIndex + 1, nextCopies[activeCopyIndex]);
         nextCopies[activeCopyIndex] = activeCopyData;
+        const savingCopyToCatalog = isCatalogStatus(activeCopyData.status as GlazeStatus);
         const nextOriginalData = {
           ...originalData,
-          copies: nextCopies,
+          status: savingCopyToCatalog ? 'draft' as GlazeStatus : originalData.status,
+          isValidated: savingCopyToCatalog ? false : originalData.isValidated,
+          copies: savingCopyToCatalog
+            ? nextCopies.map((copy, index) => index === activeCopyIndex
+              ? { ...copy, isValidated: isCatalogStatus(copy.status as GlazeStatus) }
+              : moveCopyToDraft(copy))
+            : nextCopies,
           updatedAt: new Date(),
         };
         const savedActiveCopy = nextOriginalData.copies[activeCopyIndex];
@@ -1571,10 +1584,13 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       } else if (effectiveId) {
         const freshOriginalData = await getFreshOriginalData();
         const currentCopies = freshOriginalData?.copies || originalData?.copies || [];
+        const savingOriginalToCatalog = isCatalogStatus(data.status as GlazeStatus);
         const nextData = {
-          ...cleanData,
-          isValidated: isRepositoryStatus(cleanData.status),
-          copies: currentCopies,
+          ...data,
+          isValidated: savingOriginalToCatalog,
+          copies: savingOriginalToCatalog
+            ? currentCopies.map(moveCopyToDraft)
+            : currentCopies,
         } as Glaze;
         await setDoc(doc(db, 'glazes', effectiveId), sanitizeForFirestore(nextData));
         setOriginalData(nextData);
@@ -1606,6 +1622,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       setDirty(false);
       setLastSaved(true);
       window.setTimeout(() => setLastSaved(false), 3000);
+      onSuccess((activeCopyIndex >= 0 && originalData) ? (formData.status as GlazeStatus | undefined) : (data.status as GlazeStatus | undefined));
     } catch (error) {
       console.error('Error guardando la ficha:', error);
       const raw = error instanceof Error ? error.message : String(error);
@@ -1620,13 +1637,13 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     }
   };
 
-  const saveMenuOptions = [
-    { value: 'repository', label: 'Repositorio', icon: Save },
-    { value: 'draft', label: 'Borrador', icon: Copy },
-    { value: 'formuladas', label: 'Formuladas', icon: FolderOpen },
+  const saveMenuOptions: Array<{ value: GlazeStatus; label: string; icon: typeof Save }> = [
+    { value: 'published', label: 'Repositorio', icon: Save },
+    { value: 'draft', label: 'Borrador pruebas', icon: Copy },
+    { value: 'validated', label: 'Formulados', icon: FolderOpen },
   ];
 
-  const handleSaveTo = async (target: string) => {
+  const handleSaveTo = async (target: GlazeStatus) => {
     setSaveMenuOpen(false);
     if (!auth.currentUser) {
       alert('Debes iniciar sesión para guardar la ficha.');
@@ -1634,60 +1651,15 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     }
     setSaveSaving(target);
     try {
-      // 'formuladas' guarda una copia en el área personal del usuario (fuera
-      // del repositorio), sin tocar la ficha original.
-      if (target === 'formuladas') {
-        const recipe = formData.recipe
-          ? syncRecipeTotals({
-              ...formData.recipe,
-              base: [...formData.recipe.base],
-              additional: [...formData.recipe.additional],
-            })
-          : undefined;
-        const uid = auth.currentUser.uid;
-        const cleanData = sanitizeForFirestore(formData);
-        const id = (effectiveId || savedGlazeIdRef.current) ?? null;
-        const payload = {
-          ...cleanData,
-          recipe,
-          copies: undefined as unknown,
-          status: 'draft',
-          isValidated: false,
-          scope: 'formuladas',
-          sourceGlazeId: id,
-          sourceCode: formData.code || 'FICHA',
-          authorId: auth.currentUser.uid,
-          authorName: auth.currentUser.displayName || 'Anónimo',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        };
-        await addDoc(collection(db, `formuladas/${uid}/items`), sanitizeForFirestore(payload));
-        try {
-          await addDoc(collection(db, 'activity'), {
-            type: 'edit',
-            glazeId: id || '',
-            name: formData.name,
-            code: formData.code,
-            area: true,
-            byName: auth.currentUser.displayName || 'Anónimo',
-            at: serverTimestamp(),
-          });
-        } catch (error) {
-          console.error('Error registrando actividad:', error);
-        }
-        setFlashMessage('Ficha guardada en tus Formuladas');
-        return;
-      }
-
-      // 'repository' y 'draft' realizan el guardado estándar en glazes.
-      // 'draft' fuerza el estado borrador; 'repository' respeta el del formulario.
       await handleSubmit(
         { preventDefault: () => {} } as React.FormEvent,
-        target === 'draft' ? 'draft' : undefined,
+        target,
       );
-      if (target === 'draft') {
-        setFlashMessage('Ficha guardada como borrador');
-      }
+      setFlashMessage(target === 'draft'
+        ? 'Ficha guardada en Borrador pruebas'
+        : target === 'validated'
+          ? 'Ficha guardada en Formulados'
+          : 'Ficha guardada en Repositorio');
     } catch (error) {
       console.error('Error guardando en sección:', error);
       alert(error instanceof Error ? error.message : 'No se pudo guardar la ficha en esa sección.');
@@ -1703,8 +1675,14 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     return () => window.clearTimeout(timer);
   }, [flashMessage]);
   const activeCopy = activeCopyIndex >= 0 && formData.recipe ? formData as GlazeCopy : null;
-  const copySelectorIndexes = [0, 1, 2];
+  const showOnlyActiveVersion = isCatalogStatus(formData.status as GlazeStatus);
+  const copySelectorIndexes = showOnlyActiveVersion && activeCopyIndex >= 0 ? [activeCopyIndex] : [0, 1, 2];
   const storedCopies = getStoredCopies();
+  const saveDestinations: Array<{ status: GlazeStatus; title: string; description: string }> = [
+    { status: 'draft', title: 'Guardar en Borrador pruebas', description: 'Trabajo interno o pruebas pendientes.' },
+    { status: 'validated', title: 'Guardar en Formulados', description: 'Formula lista, sin publicar en repositorio.' },
+    { status: 'published', title: 'Guardar en Repositorio', description: 'Ficha oficial publicada.' },
+  ];
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
@@ -2396,20 +2374,25 @@ Subir Excel (URLs o tablas)
           </div>
 
           <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
-            <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Estado de la Ficha</h4>
+            <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Destino al guardar</h4>
             <div className="space-y-3">
-              {(['draft', 'pending', 'validated', 'published'] as GlazeStatus[]).map(s => (
+              {saveDestinations.map(({ status, title, description }) => (
                 <button
-                  key={s}
+                  key={status}
                   type="button"
-                  onClick={() => setFormData({ ...formData, status: s })}
+                  onClick={() => setFormData({ ...formData, status })}
                   className={cn(
-                    "flex w-full items-center justify-between rounded-xl border px-4 py-3 text-xs font-bold uppercase tracking-widest transition-all",
-                    formData.status === s ? "border-[#2D3436] bg-[#2D3436] text-white" : "border-[#E4E4E2] text-[#636E72] hover:bg-[#F7F7F5]"
+                    "flex w-full items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left transition-all",
+                    formData.status === status ? "border-[#2D3436] bg-[#2D3436] text-white" : "border-[#E4E4E2] text-[#636E72] hover:bg-[#F7F7F5]"
                   )}
                 >
-                  {STATUS_LABELS[s]}
-                  {formData.status === s && <CheckCircle size={14} />}
+                  <span>
+                    <span className="block text-xs font-bold uppercase tracking-widest">{title}</span>
+                    <span className={cn("mt-1 block text-[11px] font-medium normal-case tracking-normal", formData.status === status ? "text-white/75" : "text-[#636E72]")}>
+                      {description}
+                    </span>
+                  </span>
+                  {formData.status === status && <CheckCircle size={14} />}
                 </button>
               ))}
             </div>

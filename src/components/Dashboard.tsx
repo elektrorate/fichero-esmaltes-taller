@@ -91,7 +91,7 @@ export default function Dashboard({ onNavigate, profile }: DashboardProps) {
   const stats = useMemo(() => ({
     total: glazes.length,
     pending: glazes.filter(g => g.status === 'pending').length,
-    validated: glazes.filter(g => g.status === 'validated' || g.status === 'published').length,
+    validated: glazes.filter(g => g.status === 'validated').length,
     lowInventory: glazes.filter(g => g.inventoryLevel !== undefined && g.inventoryLevel <= 25)
   }), [glazes]);
 
