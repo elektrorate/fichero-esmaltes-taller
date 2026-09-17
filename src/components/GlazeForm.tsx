@@ -1144,6 +1144,12 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
   const isCatalogStatus = (status: GlazeStatus) => status === 'validated' || status === 'published';
 
+  const moveCopyToDraft = (copy: GlazeCopy): GlazeCopy => ({
+    ...copy,
+    status: 'draft',
+    isValidated: false,
+  });
+
   const loadSourceFormula = async () => {
     setSourceLoading(true);
     setSourceError('');
