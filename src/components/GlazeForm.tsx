@@ -1144,12 +1144,6 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
   const isCatalogStatus = (status: GlazeStatus) => status === 'validated' || status === 'published';
 
-  const moveCopyToDraft = (copy: GlazeCopy): GlazeCopy => ({
-    ...copy,
-    status: 'draft',
-    isValidated: false,
-  });
-
   const loadSourceFormula = async () => {
     setSourceLoading(true);
     setSourceError('');
@@ -1574,7 +1568,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
           copies: savingCopyToCatalog
             ? nextCopies.map((copy, index) => index === activeCopyIndex
               ? { ...copy, isValidated: isCatalogStatus(copy.status as GlazeStatus) }
-              : moveCopyToDraft(copy))
+              : { ...copy, status: 'draft' as GlazeStatus, isValidated: false })
             : nextCopies,
           updatedAt: new Date(),
         };
@@ -1595,7 +1589,11 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
           ...data,
           isValidated: savingOriginalToCatalog,
           copies: savingOriginalToCatalog
-            ? currentCopies.map(moveCopyToDraft)
+            ? currentCopies.map(copy => ({
+                ...copy,
+                status: 'draft' as GlazeStatus,
+                isValidated: false,
+              }))
             : currentCopies,
         } as Glaze;
         await setDoc(doc(db, 'glazes', effectiveId), sanitizeForFirestore(nextData));
