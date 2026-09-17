@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/glazy-api/:path*",
+      "destination": "https://api.glazy.org/:path*"
+    }
+  ]
+}
