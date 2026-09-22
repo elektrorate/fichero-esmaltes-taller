@@ -6,7 +6,7 @@ import { STATUS_LABELS, ORTON_CONES, matchesOrtonCone } from '../constants';
 import { generateBulkPDF } from '../lib/pdfUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Edit2, Eye, MoreVertical, Tag, FileDown, CheckSquare, Square, Download, X, Check, Loader2, Filter, RotateCcw, Trash2, Search } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, matchesSearch } from '../lib/utils';
 
 const FILTER_OPTIONS = {
   colors: ['Blanco', 'Negro', 'Azul', 'Rojo', 'Amarillo', 'Verde', 'Naranja', 'Morado', 'Marrón', 'Gris', 'Transparente'],
@@ -137,11 +137,9 @@ export default function GlazeList({
   });
 
   const baseFilteredGlazes = displayGlazes.filter(glaze => {
-    const effectiveQuery = (localSearch || searchQuery || '').toLowerCase();
-    if (effectiveQuery) {
-      const matchesName = glaze.name.toLowerCase().includes(effectiveQuery);
-      const matchesCode = glaze.code?.toLowerCase().includes(effectiveQuery);
-      if (!matchesName && !matchesCode) return false;
+    const effectiveQuery = localSearch || searchQuery || '';
+    if (effectiveQuery.trim()) {
+      if (!matchesSearch(effectiveQuery, glaze.name, glaze.code, glaze.color)) return false;
     }
 
     if (filterColor && glaze.color !== filterColor) return false;

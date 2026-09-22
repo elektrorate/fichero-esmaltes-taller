@@ -3,7 +3,7 @@ import { collection, doc, onSnapshot, query, updateDoc } from 'firebase/firestor
 import { Boxes, PackageSearch, Search, SlidersHorizontal } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { Glaze } from '../types';
-import { cn } from '../lib/utils';
+import { cn, matchesSearch } from '../lib/utils';
 
 type InventoryFilter = 'all' | 'high' | 'medium' | 'low';
 
@@ -65,13 +65,8 @@ export default function SettingsPanel() {
   };
 
   const filteredGlazes = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-
     return glazes.filter((glaze) => {
-      const matchesQuery =
-        normalizedQuery.length === 0 ||
-        glaze.name.toLowerCase().includes(normalizedQuery) ||
-        glaze.code.toLowerCase().includes(normalizedQuery);
+      const matchesQuery = matchesSearch(searchQuery, glaze.name, glaze.code, glaze.color);
 
       const level = glaze.inventoryLevel;
       const matchesFilter =

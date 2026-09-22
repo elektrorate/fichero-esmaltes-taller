@@ -6,7 +6,7 @@ import { collection, query, orderBy, onSnapshot, getDocs, addDoc, setDoc, delete
 import { Glaze, GlazeStatus, UserProfile } from '../types';
 import RecalculoModal from './RecalculoModal';
 import { buildRecalculatedRecipe, RecalcRecipeInput, RecalcResult } from '../lib/recalcEngine';
-import { cn } from '../lib/utils';
+import { cn, matchesSearch } from '../lib/utils';
 
 interface Props {
   profile: UserProfile | null;
@@ -225,11 +225,9 @@ export default function RecalculoWorkspace({ profile }: Props) {
     }
   };
 
-  const filteredGlazes = sourceGlazes.filter((g) => {
-    const term = pickerSearch.trim().toLowerCase();
-    if (!term) return true;
-    return g.name.toLowerCase().includes(term) || g.code.toLowerCase().includes(term);
-  });
+  const filteredGlazes = sourceGlazes.filter((g) =>
+    matchesSearch(pickerSearch, g.name, g.code, g.color)
+  );
 
   const actionButtonClass =
     'flex items-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-bold uppercase tracking-wide transition-all';
