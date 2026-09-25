@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { auth, db, googleProvider, OperationType, handleFirestoreError } from './lib/firebase';
+import { auth, db, googleProvider } from './lib/firebase';
 import { onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { UserProfile, UserRole } from './types';
@@ -25,21 +25,14 @@ import { cn } from './lib/utils';
 
 // Components
 import Dashboard from './components/Dashboard';
-import GlazeList from './components/GlazeList';
+import GlazeList, { type GlazeListFilters } from './components/GlazeList';
 import GlazeForm from './components/GlazeForm';
 import GlazeDetail from './components/GlazeDetail';
 import AdminPanel from './components/AdminPanel';
 import SettingsPanel from './components/SettingsPanel';
 import FiringCurveView, { firingCurveGuard } from './components/FiringCurveView';
-import RecalculoWorkspace from './components/RecalculoWorkspace';
 
-export interface GlazeFilters {
-  color?: string;
-  finish?: string;
-  texture?: string;
-  chemicalFamily?: string;
-  status?: string;
-}
+export type GlazeFilters = GlazeListFilters;
 
 const FILTER_OPTIONS = {
   colors: ['Blanco', 'Negro', 'Azul', 'Rojo', 'Amarillo', 'Verde', 'Naranja', 'Morado', 'Marrón', 'Gris', 'Transparente'],
@@ -54,7 +47,7 @@ const FILTER_OPTIONS = {
   ]
 };
 
-type View = 'dashboard' | 'repository' | 'draft-tests' | 'recalculo' | 'formuladas' | 'create' | 'detail' | 'admin' | 'settings' | 'inventory-alerts' | 'firing-curve';
+type View = 'dashboard' | 'repository' | 'draft-tests' | 'formuladas' | 'create' | 'detail' | 'admin' | 'settings' | 'inventory-alerts' | 'firing-curve';
 
 const VIEW_HASH: Record<string, View> = {
   dashboard: 'dashboard',
@@ -82,6 +75,10 @@ export default function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [selectedGlazeId, setSelectedGlazeId] = useState<string | null>(null);
   const [selectedCopyIndex, setSelectedCopyIndex] = useState<number | null>(null);
+  // Se incrementa al pedir una ficha nueva para remontar GlazeForm. Sin esto la
+  // vista "create" → "create" reutiliza la instancia y el id de la ficha creada
+  // anteriormente, que el siguiente guardado sobrescribiría.
+  const [createNonce, setCreateNonce] = useState(0);
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 1024);
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 1024);
   
@@ -124,18 +121,13 @@ export default function App() {
         try {
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           const email = firebaseUser.email?.toLowerCase();
+          // El rol de administrador semilla lo concede `firestore.rules`, no el
+          // cliente: aquí solo se solicita y se muestra lo que el servidor ya
+          // aceptó, de modo que un usuario no pueda auto-asignarse admin.
           const isAdminEmail = email === 'erick@kgbycia.com';
 
           if (userDoc.exists()) {
-            const existingProfile = userDoc.data() as UserProfile;
-            // Force admin role if email matches, even if it was changed in DB
-            if (isAdminEmail && existingProfile.role !== 'admin') {
-              const updatedProfile = { ...existingProfile, role: 'admin' as UserRole };
-              await setDoc(doc(db, 'users', firebaseUser.uid), updatedProfile);
-              setProfile(updatedProfile);
-            } else {
-              setProfile(existingProfile);
-            }
+            setProfile(userDoc.data() as UserProfile);
           } else {
             // Check for pre-authorized invite
             let role: UserRole = 'collaborator';
@@ -153,9 +145,14 @@ export default function App() {
               displayName: firebaseUser.displayName || 'Usuario',
               photoURL: firebaseUser.photoURL || '',
               role: isAdminEmail ? 'admin' : role,
-              createdAt: serverTimestamp(),
+              createdAt: null,
             };
-            await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
+            // `serverTimestamp()` se aplica solo en la escritura: es un centinela
+            // de FieldValue, no un valor de Timestamp.
+            await setDoc(doc(db, 'users', firebaseUser.uid), {
+              ...newProfile,
+              createdAt: serverTimestamp(),
+            });
             setProfile(newProfile);
 
             // Clean up invite if it existed
@@ -171,7 +168,6 @@ export default function App() {
         } catch (error) {
           console.error('Error fetching profile:', error);
           setLoginError('Error al cargar el perfil. Por favor, intenta de nuevo.');
-          // handleFirestoreError(error, OperationType.GET, 'users');
         }
       } else {
         setProfile(null);
@@ -359,6 +355,7 @@ export default function App() {
                 if (item.id === 'create') {
                   setSelectedGlazeId(null);
                   setSelectedCopyIndex(null);
+                  setCreateNonce(nonce => nonce + 1);
                 }
               }}
               className={cn(
@@ -541,7 +538,7 @@ export default function App() {
         <div className="p-4 lg:p-8">
           <AnimatePresence mode="wait">
             <motion.div
-              key={currentView + (selectedGlazeId || '')}
+              key={`${currentView}-${selectedGlazeId ?? 'new'}-${createNonce}`}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
@@ -577,7 +574,6 @@ export default function App() {
                   onEdit={(id, copyIndex) => { setSelectedGlazeId(id); setSelectedCopyIndex(copyIndex ?? null); setCurrentView('create'); }}
                 />
               )}
-              {currentView === 'recalculo' && <RecalculoWorkspace profile={profile} />}
               {currentView === 'formuladas' && (
                 <GlazeList
                   searchQuery={searchQuery}

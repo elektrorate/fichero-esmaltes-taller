@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { db, OperationType, handleFirestoreError, auth } from '../lib/firebase';
-import { collection, onSnapshot, updateDoc, doc, query, orderBy, setDoc, serverTimestamp, addDoc, deleteDoc } from 'firebase/firestore';
+import { db, auth } from '../lib/firebase';
+import { collection, onSnapshot, updateDoc, doc, query, orderBy, setDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { glazeRepo, toRepoError } from '../lib/glazesRepo';
 import { UserProfile, UserRole, Glaze } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mail, ShieldCheck, UserPlus, X, Loader2, Check, Database, Trash2 } from 'lucide-react';
@@ -14,18 +15,29 @@ export default function AdminPanel() {
   const [newUser, setNewUser] = useState({ email: '', displayName: '', role: 'collaborator' as UserRole });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    const qUsers = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
-    const unsubscribeUsers = onSnapshot(qUsers, (snapshot) => {
-      setUsers(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
-    });
-
-    const qInvites = query(collection(db, 'invites'), orderBy('createdAt', 'desc'));
-    const unsubscribeInvites = onSnapshot(qInvites, (snapshot) => {
-      setInvites(snapshot.docs.map(doc => ({ email: doc.id, ...doc.data() } as any)));
+    const onError = (context: string) => (error: Error) => {
+      console.error(`Error cargando ${context}:`, error);
+      setLoadError(error.message);
       setLoading(false);
-    });
+    };
+
+    const unsubscribeUsers = onSnapshot(
+      query(collection(db, 'users'), orderBy('createdAt', 'desc')),
+      snapshot => setUsers(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))),
+      onError('usuarios'),
+    );
+
+    const unsubscribeInvites = onSnapshot(
+      query(collection(db, 'invites'), orderBy('createdAt', 'desc')),
+      snapshot => {
+        setInvites(snapshot.docs.map(doc => ({ email: doc.id, ...doc.data() } as { email: string; role: string })));
+        setLoading(false);
+      },
+      onError('invitaciones'),
+    );
 
     return () => {
       unsubscribeUsers();
@@ -37,7 +49,7 @@ export default function AdminPanel() {
     try {
       await updateDoc(doc(db, 'users', uid), { role: newRole });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'users');
+      setMessage({ type: 'error', text: toRepoError(error, 'users').message });
     }
   };
 
@@ -249,24 +261,19 @@ export default function AdminPanel() {
       ];
 
       for (const example of examples) {
-        await addDoc(collection(db, 'glazes'), {
-          ...example,
-          authorId: auth.currentUser?.uid,
-          authorName: auth.currentUser?.displayName || 'Admin',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
+        await glazeRepo.create(example);
       }
       setMessage({ type: 'success', text: '6 Recetas de ejemplo creadas con éxito.' });
     } catch (error) {
       console.error(error);
-      setMessage({ type: 'error', text: 'Error al crear ejemplos.' });
+      setMessage({ type: 'error', text: toRepoError(error, 'glazes').message });
     } finally {
       setIsSubmitting(false);
     }
   };
 
   if (loading) return <div className="py-20 text-center text-[#636E72]">Cargando gestión de usuarios...</div>;
+  if (loadError) return <div className="py-20 text-center text-red-600">No se pudo cargar el panel: {loadError}</div>;
 
   return (
     <div className="space-y-8">

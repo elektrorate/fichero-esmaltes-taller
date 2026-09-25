@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
-import { db, auth, OperationType, handleFirestoreError } from '../lib/firebase';
-import { doc, getDoc, setDoc, addDoc, deleteDoc, collection, serverTimestamp, query, orderBy, limit, onSnapshot, where, getDocs } from 'firebase/firestore';
+import { auth } from '../lib/firebase';
+import { glazeRepo, sanitizeFirestore as sanitizeForFirestore, isCatalogStatus, uploadGlazeImage, GlazeConflictError } from '../lib/glazesRepo';
 import { Glaze, GlazeCopy, RecipeItem, GlazeStatus } from '../types';
 import { STATUS_LABELS, ATMOSPHERE_OPTIONS } from '../constants';
 import GlazeTechModules from './GlazeTechModules';
@@ -9,32 +9,15 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Save, Plus, Trash2, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload, FileInput, Copy, CheckCircle2, RefreshCcw, ChevronDown, FolderOpen } from 'lucide-react';
 import { cn } from '../lib/utils';
 import RecalculoModal from './RecalculoModal';
+import ConflictModal from './ConflictModal';
+import DataNoticeBanner, { type DataNotice } from './DataNoticeBanner';
 import { buildRecalculatedRecipe, RecalcResult } from '../lib/recalcEngine';
 import { extractRecipeFromImage, extractionToRecipe } from '../lib/recipeExtractor';
 
-// Firestore no admite valores `undefined`. Elimina recursivamente todas las
-// claves con valor `undefined` (y convierte `null`/arrays vacíos donde haga
-// falta) antes de escribir, para evitar que cualquier campo anidado rompa
-// el guardado o el duplicado.
-function sanitizeForFirestore<T>(value: T): T {
-  if (value === undefined) {
-    return undefined as unknown as T;
-  }
-  if (Array.isArray(value)) {
-    return value.map((v) => sanitizeForFirestore(v)) as unknown as T;
-  }
-  if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      const cleaned = sanitizeForFirestore(val);
-      if (cleaned !== undefined) {
-        out[key] = cleaned;
-      }
-    }
-    return out as T;
-  }
-  return value;
-}
+// Firestore rechaza un documento de más de 1 MiB. La foto principal y las
+// copias de galería comparten ese presupuesto, así que se valida el blob
+// comprimido antes de escribir en lugar de fallar al guardar.
+const MAX_IMAGE_BYTES = 900 * 1024;
 
 interface GlazeFormProps {
   glazeId: string | null;
@@ -830,12 +813,14 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
   const [sourceUrl, setSourceUrl] = useState('');
   const [bulkImporting, setBulkImporting] = useState(false);
   const [bulkImportMessage, setBulkImportMessage] = useState('');
+  const [dataNotice, setDataNotice] = useState<DataNotice | null>(null);
   const [activeCopyIndex, setActiveCopyIndex] = useState(-1);
   const [codeDuplicate, setCodeDuplicate] = useState(false);
   const [codeManuallyEdited, setCodeManuallyEdited] = useState(false);
   const [calcMode, setCalcMode] = useState<'percent' | 'grams'>('grams');
   const [showRecalculo, setShowRecalculo] = useState(false);
   const [imageExtracting, setImageExtracting] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
   const [imageError, setImageError] = useState('');
   const [imageMessage, setImageMessage] = useState('');
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -843,6 +828,12 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
   const [saveSaving, setSaveSaving] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [lastSaved, setLastSaved] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [conflict, setConflict] = useState<{ fields: string[]; remoteEditor: string } | null>(null);
+  const [conflictSaving, setConflictSaving] = useState(false);
+  // Se guarda el identificador de la ficha y la acción pendiente para poder
+  // repetir el guardado con `force` cuando el usuario elige sobrescribir.
+  const pendingConflictRef = useRef<{ kind: 'content' | 'copies'; forcedStatus?: GlazeStatus; copies?: Glaze['copies'] } | null>(null);
   const baselineRef = useRef('');
   const savedGlazeIdRef = useRef<string | null>(null);
   const effectiveId = glazeId || savedGlazeIdRef.current;
@@ -872,21 +863,12 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
   const [nextNumber, setNextNumber] = useState('001');
 
   useEffect(() => {
-    if (!glazeId) {
-      const q = query(collection(db, 'glazes'), orderBy('createdAt', 'desc'), limit(1));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        if (!snapshot.empty) {
-          const lastGlaze = snapshot.docs[0].data() as Glaze;
-          const lastCode = lastGlaze.code || '';
-          const match = lastCode.match(/-(\d{3})(?:-[A-Z])?$/);
-          if (match) {
-            const nextNum = parseInt(match[1]) + 1;
-            setNextNumber(nextNum.toString().padStart(3, '0'));
-          }
-        }
-      });
-      return () => unsubscribe();
-    }
+    if (glazeId) return;
+    let active = true;
+    glazeRepo.nextCodeNumber()
+      .then(code => { if (active) setNextNumber(code); })
+      .catch(() => { if (active) setNextNumber('001'); });
+    return () => { active = false; };
   }, [glazeId]);
 
   useEffect(() => {
@@ -911,53 +893,61 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       setCodeDuplicate(false);
       return;
     }
+    let active = true;
     const checkDuplicate = async () => {
-      const q = query(collection(db, 'glazes'), where('code', '==', formData.code));
-      const snapshot = await getDocs(q);
-      const isDuplicate = !snapshot.empty && snapshot.docs.some(d => d.id !== glazeId);
-      setCodeDuplicate(isDuplicate);
+      try {
+        const isDuplicate = await glazeRepo.isCodeTaken(formData.code, glazeId);
+        if (active) setCodeDuplicate(isDuplicate);
+      } catch {
+        if (active) setCodeDuplicate(false);
+      }
     };
     const timer = setTimeout(checkDuplicate, 500);
-    return () => clearTimeout(timer);
+    return () => { active = false; clearTimeout(timer); };
   }, [formData.code, glazeId]);
 
   useEffect(() => {
-    if (glazeId) {
-      const fetchGlaze = async () => {
-        try {
-          const docRef = doc(db, 'glazes', glazeId);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            const data = docSnap.data() as Glaze;
-            setOriginalData(data);
-            const copyIndex = initialCopyIndex ?? -1;
-            const copy = copyIndex >= 0 ? data.copies?.[copyIndex] : null;
-            if (copy) {
-              setFormData({ ...copy, copies: data.copies || [] });
-              baselineRef.current = JSON.stringify(sanitizeForFirestore({ ...copy, copies: data.copies || [] }));
-              setDirty(false);
-              setActiveCopyIndex(copyIndex);
-            } else {
-              setFormData(data);
-              baselineRef.current = JSON.stringify(sanitizeForFirestore(data));
-              setDirty(false);
-              setActiveCopyIndex(-1);
-            }
-            
-            const codeParts = data.code.split('-');
-            if (codeParts.length >= 4) {
-              setNextNumber(codeParts[3]);
-              if (codeParts.length === 5) {
-                setVariant(codeParts[4]);
-              }
-            }
-          }
-        } catch (error) {
-          handleFirestoreError(error, OperationType.GET, 'glazes');
+    if (!glazeId) return;
+    let active = true;
+    const fetchGlaze = async () => {
+      setLoading(true);
+      try {
+        const data = await glazeRepo.get(glazeId);
+        if (!data) {
+          setLoadError('No se ha encontrado la ficha. Puede que se haya eliminado.');
+          setLoading(false);
+          return;
         }
-      };
-      fetchGlaze();
-    }
+        if (!active) return;
+        setLoadError('');
+        setOriginalData(data);
+        const copyIndex = initialCopyIndex ?? -1;
+        const copy = copyIndex >= 0 ? data.copies?.[copyIndex] : null;
+        if (copy) {
+          setFormData({ ...copy, copies: data.copies || [] });
+          baselineRef.current = JSON.stringify(sanitizeForFirestore({ ...copy, copies: data.copies || [] }));
+          setActiveCopyIndex(copyIndex);
+        } else {
+          setFormData(data);
+          baselineRef.current = JSON.stringify(sanitizeForFirestore(data));
+          setActiveCopyIndex(-1);
+        }
+        setDirty(false);
+
+        const codeParts = (data.code || '').split('-');
+        if (codeParts.length >= 4) {
+          setNextNumber(codeParts[3]);
+          if (codeParts.length === 5) setVariant(codeParts[4]);
+        }
+      } catch (error) {
+        if (!active) return;
+        setLoadError(error instanceof Error ? error.message : 'No se pudo cargar la ficha.');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    fetchGlaze();
+    return () => { active = false; };
   }, [glazeId, initialCopyIndex]);
 
   // Detecta cambios sin guardar comparando el estado actual con la última
@@ -1038,27 +1028,9 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     };
   };
 
-  const getAvailableCode = async (baseCode: string) => {
-    for (let index = 0; index <= 99; index += 1) {
-      const candidate = index === 0 ? baseCode : `${baseCode}-${index + 1}`;
-      const snapshot = await getDocs(query(collection(db, 'glazes'), where('code', '==', candidate)));
-
-      if (snapshot.empty) {
-        return candidate;
-      }
-    }
-
-    return `${baseCode}-${Date.now().toString().slice(-6)}`;
-  };
-
   const getStoredCopies = () => originalData?.copies || formData.copies || [];
 
-  const getFreshOriginalData = async () => {
-    if (!glazeId) return originalData;
-    const docSnap = await getDoc(doc(db, 'glazes', glazeId));
-    if (!docSnap.exists()) return originalData;
-    return docSnap.data() as Glaze;
-  };
+  const getFreshOriginalData = (id: string) => glazeRepo.getWithCopies(id);
 
   const selectOriginal = () => {
     if (originalData) {
@@ -1074,7 +1046,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     setActiveCopyIndex(index);
   };
 
-  const buildCopyFromActiveForm = (copyNumber: number, existingCopy?: GlazeCopy, recalcNameCode?: boolean): GlazeCopy => {
+  const buildCopyFromActiveForm = (copyNumber: number, existingCopy?: GlazeCopy, recalcNameCode?: boolean, forcedStatus?: GlazeStatus): GlazeCopy => {
     const now = new Date();
     const recipe = formData.recipe
       ? syncRecipeTotals({
@@ -1101,7 +1073,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         ? (existingCopy?.code || formData.code || 'FICHA')
         : `${formData.code || 'FICHA'}-C${copyNumber}`;
     const internalCopy: GlazeCopy = {
-      copyId: existingCopy?.copyId || `${Date.now()}`,
+      copyId: existingCopy?.copyId || crypto.randomUUID(),
       sourceCode: existingCopy?.sourceCode || originalData?.code || formData.code || '',
       name: sourceName,
       code: sourceCode,
@@ -1119,10 +1091,10 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       clayBody: formData.clayBody || '',
       firingType: formData.firingType || '',
       atmosphere: formData.atmosphere || '',
-      status: formData.status || 'draft',
+      status: forcedStatus ?? formData.status ?? 'draft',
       authorId: formData.authorId || auth.currentUser?.uid || '',
       authorName: formData.authorName || auth.currentUser?.displayName || 'Anónimo',
-      isValidated: formData.status === 'validated' || formData.status === 'published',
+      isValidated: (forcedStatus ?? formData.status) === 'validated' || (forcedStatus ?? formData.status) === 'published',
       createdAt: existingCopy?.createdAt || now,
       updatedAt: now,
     };
@@ -1142,11 +1114,10 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     return internalCopy;
   };
 
-  const isCatalogStatus = (status: GlazeStatus) => status === 'validated' || status === 'published';
-
   const loadSourceFormula = async () => {
     setSourceLoading(true);
     setSourceError('');
+    setDataNotice(null);
 
     try {
       if (looksLikeSpreadsheetSource(sourceUrl)) {
@@ -1162,6 +1133,12 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
       const importedGlaze = buildGlazeFromImportedRecipe(importedRecipe, sourceUrl);
 
+      // La carga de Glazy reemplaza el contenido del formulario. Si ya había
+      // algo escrito, conviene decirlo en el aviso: si no, el usuario cree
+      // que esos datos se han añadido a los suyos.
+      const hadContent = Boolean(formData.name?.trim())
+        || Boolean(formData.recipe?.base.some(item => item.material?.trim()));
+
       setCodeManuallyEdited(true);
       setCalcMode('grams');
       setFormData({
@@ -1169,6 +1146,19 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         ...importedGlaze,
         status: mapGlazyStatus(importedRecipe.state),
         clayBody: formData.clayBody || importedGlaze.clayBody
+      });
+
+      const baseCount = importedRecipe.base.filter(item => item.material?.trim()).length;
+      const extraCount = importedRecipe.additional.filter(item => item.material?.trim()).length;
+      const extraText = extraCount > 0 ? ` y ${extraCount} extra${extraCount > 1 ? 's' : ''}` : '';
+      setDataNotice({
+        tone: 'success',
+        title: `Datos cargados desde Glazy${importedRecipe.name ? `: ${importedRecipe.name}` : ''}`,
+        detail: [
+          `Se han rellenado ${baseCount} material${baseCount === 1 ? '' : 'es'} de base${extraText}.`,
+          hadContent ? 'Se han sustituido los datos que ya tenías en el formulario.' : '',
+          'Pulsa "Guardar Ficha" para conservarlo.',
+        ].filter(Boolean).join(' '),
       });
     } catch (error) {
       setSourceError(error instanceof Error ? error.message : 'No pude cargar esa fórmula fuente.');
@@ -1274,17 +1264,9 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
           }
 
           const importedGlaze = buildGlazeFromImportedRecipe(importedRecipe, url);
-          const code = await getAvailableCode(importedGlaze.code || `GLAZY-${importedRecipe.id}`);
+          const code = await glazeRepo.nextAvailableCode(importedGlaze.code || `GLAZY-${importedRecipe.id}`);
 
-          await addDoc(collection(db, 'glazes'), {
-            ...importedGlaze,
-            code,
-            status: 'draft',
-            authorId: auth.currentUser?.uid,
-            authorName: auth.currentUser?.displayName || 'Anónimo',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
+          await glazeRepo.create({ ...importedGlaze, code, status: 'draft' });
 
           created += 1;
         } catch {
@@ -1296,17 +1278,9 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         await advance();
         try {
           const baseCode = rowGlaze.code || rowGlaze.name || `FICHA-${sheet}`;
-          const code = await getAvailableCode(baseCode);
+          const code = await glazeRepo.nextAvailableCode(baseCode);
 
-          await addDoc(collection(db, 'glazes'), {
-            ...rowGlaze,
-            code,
-            status: 'draft',
-            authorId: auth.currentUser?.uid,
-            authorName: auth.currentUser?.displayName || 'Anónimo',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
+          await glazeRepo.create({ ...rowGlaze, code, status: 'draft' });
 
           created += 1;
         } catch {
@@ -1314,10 +1288,20 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         }
       }
 
-      setBulkImportMessage(`Importación terminada: ${created} fichas borrador creadas${failed.length ? `, ${failed.length} fallidas` : ''}.`);
+      setBulkImportMessage('');
+      setDataNotice(null);
+      setSourceError('');
+      setDataNotice({
+        tone: failed.length > 0 ? 'info' : 'success',
+        title: `Importación terminada: ${created} ${created === 1 ? 'ficha creada' : 'fichas creadas'}`,
+        detail: failed.length > 0
+          ? `${created} fichas se han guardado como borrador. ${failed.length} no se pudieron importar: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '…' : ''}.`
+          : `Las ${created} fichas se han guardado como borrador y ya están en el repositorio. Esta ficha sigue sin guardar.`,
+      });
     } catch (error) {
       setSourceError(error instanceof Error ? error.message : 'No pude leer ese Excel.');
       setBulkImportMessage('');
+      setDataNotice(null);
     } finally {
       setBulkImporting(false);
     }
@@ -1366,6 +1350,11 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       setImageMessage(
         `Fórmula leída: ${built.base.length} materiales de base${built.additional.length ? ` y ${built.additional.length} extras` : ''}. Revisa y guarda la ficha.`,
       );
+      setDataNotice({
+        tone: 'success',
+        title: 'Fórmula leída de la imagen',
+        detail: `Se han rellenado ${built.base.length} material${built.base.length === 1 ? '' : 'es'} de base${built.additional.length ? ` y ${built.additional.length} extras` : ''}. Revisa que las cantidades sean correctas y pulsa "Guardar Ficha".`,
+      });
     } catch (error) {
       setImageError(error instanceof Error ? error.message : 'Error inesperado al leer la imagen.');
     } finally {
@@ -1375,6 +1364,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, targetIdx?: number) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
@@ -1382,12 +1372,15 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       return;
     }
 
+    setImageUploading(true);
+    setImageError('');
+
     const reader = new FileReader();
     reader.readAsDataURL(file);
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const img = new Image();
       img.src = event.target?.result as string;
-      img.onload = () => {
+      img.onload = async () => {
         const canvas = document.createElement('canvas');
         const MAX_WIDTH = 800;
         const MAX_HEIGHT = 800;
@@ -1411,34 +1404,51 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
 
-        // Compress to 0.6 quality JPEG to keep size really small (~50-100KB)
-        const base64String = canvas.toDataURL('image/jpeg', 0.6);
+        // JPEG al 55% mantiene la foto entre 30 y 90 KB: por debajo del límite
+        // de 1 MiB del documento incluso con la galería completa.
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.55);
+        const blob = await (await fetch(dataUrl)).blob();
 
-        if (targetIdx === undefined) {
-          // Main image
-          setFormData({ ...formData, mainImage: base64String });
-        } else {
-          // Gallery update or add
-          const newGallery = [...(formData.gallery || [])];
-          if (!formData.mainImage && targetIdx === -1) {
-            setFormData({ ...formData, mainImage: base64String });
-            return;
+        if (blob.size > MAX_IMAGE_BYTES) {
+          setImageError('La foto sigue siendo demasiado grande aun después de comprimirla. Usa una imagen más pequeña.');
+          setImageUploading(false);
+          return;
+        }
+
+        // Se intenta Storage; si el proyecto no lo tiene configurado se
+        // conserva el data-URL para no perder la imagen.
+        const uploaded = await uploadGlazeImage(
+          blob,
+          `glazes/${effectiveId ?? 'new'}/${crypto.randomUUID()}.jpg`,
+        );
+        const value = uploaded ?? dataUrl;
+        if (!uploaded) {
+          setImageMessage('Imagen guardada dentro de la ficha (Storage no disponible). No añadas muchas fotos o el guardado fallará.');
+        }
+
+        setFormData(prev => {
+          if (targetIdx === undefined) {
+            return { ...prev, mainImage: value };
           }
-          if (!formData.mainImage && targetIdx >= 0) {
+          const newGallery = [...(prev.gallery || [])];
+          if (!prev.mainImage && targetIdx === -1) {
+            return { ...prev, mainImage: value };
+          }
+          if (!prev.mainImage && targetIdx >= 0) {
             newGallery.splice(targetIdx, 1);
-            setFormData({ ...formData, mainImage: base64String, gallery: newGallery });
-            return;
+            return { ...prev, mainImage: value, gallery: newGallery };
           }
           if (targetIdx === -1) {
-            newGallery.push(base64String);
+            newGallery.push(value);
           } else {
-            newGallery[targetIdx] = base64String;
+            newGallery[targetIdx] = value;
           }
           if (newGallery.length < 8) {
             newGallery.push('');
           }
-          setFormData({ ...formData, gallery: newGallery });
-        }
+          return { ...prev, gallery: newGallery };
+        });
+        setImageUploading(false);
       };
     };
   };
@@ -1453,22 +1463,15 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       try {
         const nextCopies = [...(originalData.copies || [])];
         nextCopies.splice(activeCopyIndex, 1);
-        const nextOriginalData = {
-          ...originalData,
-          copies: nextCopies,
-          updatedAt: new Date(),
-        };
 
-        await setDoc(doc(db, 'glazes', glazeId), {
-          ...nextOriginalData,
-          updatedAt: serverTimestamp(),
-        });
+        await glazeRepo.removeCopies(glazeId, [activeCopyIndex]);
 
+        const nextOriginalData = { ...originalData, copies: nextCopies };
         setOriginalData(nextOriginalData);
         setFormData(nextOriginalData);
         setActiveCopyIndex(-1);
       } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, 'glazes');
+        alert(error instanceof Error ? error.message : 'No se pudo eliminar la copia.');
       } finally {
         setDeleting(false);
       }
@@ -1480,10 +1483,10 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
     setDeleting(true);
     try {
-      await deleteDoc(doc(db, 'glazes', glazeId));
+      await glazeRepo.remove(glazeId);
       onDelete(glazeId);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'glazes');
+      alert(error instanceof Error ? error.message : 'No se pudo eliminar la ficha.');
     } finally {
       setDeleting(false);
     }
@@ -1494,7 +1497,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
     setDuplicating(true);
     try {
-      const freshOriginalData = await getFreshOriginalData();
+      const freshOriginalData = (await getFreshOriginalData(glazeId)) || originalData;
       const currentCopies = freshOriginalData?.copies || [];
       if (currentCopies.length >= 3) {
         alert('Esta ficha ya tiene el máximo de 3 copias internas.');
@@ -1508,23 +1511,18 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         isValidated: false,
       };
       const nextCopies = [...currentCopies, internalCopy];
-      const nextOriginalData = {
-        ...(freshOriginalData || originalData || formData),
-        copies: nextCopies,
-      } as Glaze;
-      await setDoc(doc(db, 'glazes', glazeId), sanitizeForFirestore({
-        ...nextOriginalData,
-        copies: nextCopies,
-        updatedAt: serverTimestamp(),
-      }));
-
-      setOriginalData(nextOriginalData);
-      setFormData({ ...internalCopy, copies: nextCopies });
+      // `saveCopies` es transaccional: si otra persona duplica a la vez, la
+      // segunda escritura se reintenta sobre el estado nuevo en lugar de
+      // dejar solo una de las dos copias.
+      const afterSave = await glazeRepo.saveCopies(glazeId, nextCopies, freshOriginalData || originalData || {});
+      setOriginalData(afterSave);
+      setFormData({ ...internalCopy, copies: afterSave.copies || [] });
       setActiveCopyIndex(nextCopies.length - 1);
+      baselineRef.current = JSON.stringify(sanitizeForFirestore({ ...internalCopy, copies: afterSave.copies || [] }));
+      setDirty(false);
     } catch (error) {
       console.error('Error duplicando la ficha:', error);
-      const raw = error instanceof Error ? error.message : String(error);
-      alert(`No se pudo duplicar la ficha. ${raw}`);
+      alert(error instanceof Error ? error.message : 'No se pudo duplicar la ficha.');
     } finally {
       setDuplicating(false);
     }
@@ -1533,6 +1531,10 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
   const handleSubmit = async (e: React.FormEvent, forcedStatus?: GlazeStatus) => {
     e.preventDefault();
     if (codeDuplicate) return;
+    if (!auth.currentUser) {
+      alert('Debes iniciar sesión para guardar la ficha.');
+      return;
+    }
     setLoading(true);
     try {
       const recipe = formData.recipe
@@ -1546,79 +1548,68 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       const data = {
         ...formData,
         recipe,
-        ...(forcedStatus ? { status: forcedStatus, isValidated: forcedStatus === 'validated' || forcedStatus === 'published' } : {}),
+        ...(forcedStatus ? { status: forcedStatus, isValidated: isCatalogStatus(forcedStatus) } : {}),
         authorId: auth.currentUser?.uid,
         authorName: auth.currentUser?.displayName || 'Anónimo',
-        updatedAt: serverTimestamp(),
-        createdAt: formData.createdAt || serverTimestamp(),
       };
-      const cleanData = sanitizeForFirestore(data);
       // Estado que reflejará la ficha tras el guardado (para el baseline).
       let savedSnapshot: Partial<Glaze> = formData;
+      let savedStatus = (forcedStatus ?? data.status) as GlazeStatus | undefined;
+      let savedId = effectiveId;
 
-      if (effectiveId && activeCopyIndex >= 0 && originalData) {
-        const nextCopies = [...(originalData.copies || [])];
-        const activeCopyData = buildCopyFromActiveForm(activeCopyIndex + 1, nextCopies[activeCopyIndex]);
-        nextCopies[activeCopyIndex] = activeCopyData;
-        const savingCopyToCatalog = isCatalogStatus(activeCopyData.status as GlazeStatus);
-        const nextOriginalData = {
-          ...originalData,
-          status: savingCopyToCatalog ? 'draft' as GlazeStatus : originalData.status,
-          isValidated: savingCopyToCatalog ? false : originalData.isValidated,
-          copies: savingCopyToCatalog
-            ? nextCopies.map((copy, index) => index === activeCopyIndex
-              ? { ...copy, isValidated: isCatalogStatus(copy.status as GlazeStatus) }
-              : { ...copy, status: 'draft' as GlazeStatus, isValidated: false })
-            : nextCopies,
-          updatedAt: new Date(),
-        };
-        const savedActiveCopy = nextOriginalData.copies[activeCopyIndex];
+      if (effectiveId && activeCopyIndex >= 0) {
+        // Control de concurrencia: la transacción comprueba contra el servidor
+        // que nadie ha cambiado el contenido de la ficha desde que se cargó.
+        const currentCopies = [...(formData.copies || [])];
+        if (!currentCopies[activeCopyIndex]) {
+          throw new Error('La copia ya no existe. No se ha guardado nada.');
+        }
 
-        await setDoc(doc(db, 'glazes', effectiveId), sanitizeForFirestore({
-          ...nextOriginalData,
-          updatedAt: serverTimestamp(),
-        }));
-        setOriginalData(nextOriginalData);
-        savedSnapshot = { ...savedActiveCopy, copies: nextOriginalData.copies };
+        currentCopies[activeCopyIndex] = buildCopyFromActiveForm(
+          activeCopyIndex + 1,
+          currentCopies[activeCopyIndex],
+          false,
+          forcedStatus,
+        );
+        savedStatus = currentCopies[activeCopyIndex].status as GlazeStatus;
+        const savedActiveCopy = currentCopies[activeCopyIndex];
+
+        // Solo se toca el array de copias: la ficha original y el resto de
+        // copias conservan su estado y sus datos intactos.
+        const afterSave = await glazeRepo.saveCopies(effectiveId, currentCopies, originalData || {});
+        setOriginalData(afterSave);
+        savedSnapshot = { ...savedActiveCopy, copies: afterSave.copies || [] };
         setFormData(savedSnapshot);
       } else if (effectiveId) {
-        const freshOriginalData = await getFreshOriginalData();
-        const currentCopies = freshOriginalData?.copies || originalData?.copies || [];
-        const savingOriginalToCatalog = isCatalogStatus(data.status as GlazeStatus);
         const nextData = {
           ...data,
-          isValidated: savingOriginalToCatalog,
-          copies: savingOriginalToCatalog
-            ? currentCopies.map(copy => ({
-                ...copy,
-                status: 'draft' as GlazeStatus,
-                isValidated: false,
-              }))
-            : currentCopies,
+          isValidated: isCatalogStatus(data.status as GlazeStatus),
+          copies: formData.copies || originalData?.copies || [],
         } as Glaze;
-        await setDoc(doc(db, 'glazes', effectiveId), sanitizeForFirestore(nextData));
-        setOriginalData(nextData);
+        // `saveContent` no toca `copies` y comprueba, dentro de la misma
+        // transacción, que el contenido del servidor sigue siendo el que el
+        // usuario tenía en pantalla.
+        const afterSave = await glazeRepo.saveContent(effectiveId, nextData, originalData || {});
+        setOriginalData(afterSave);
+        setFormData(afterSave);
+        savedSnapshot = afterSave;
       } else {
-        const newDoc = await addDoc(collection(db, 'glazes'), sanitizeForFirestore(cleanData));
+        const newId = await glazeRepo.create(data);
         // Guardamos el id para que un segundo guardado actualice la ficha
         // recién creada en lugar de insertar un duplicado.
-        savedGlazeIdRef.current = newDoc.id;
+        savedGlazeIdRef.current = newId;
+        savedId = newId;
+        savedSnapshot = formData;
       }
       // Registro de actividad para el historial del dashboard. No bloquea el guardado.
-      const savedId = effectiveId ?? savedGlazeIdRef.current;
       if (savedId) {
-        try {
-          await addDoc(collection(db, 'activity'), {
-            type: 'edit',
-            glazeId: savedId,
-            name: formData.name,
-            code: formData.code,
-            byName: auth.currentUser?.displayName || 'Anónimo',
-            at: serverTimestamp(),
-          });
-        } catch (e) {
-          console.error('Error registrando actividad:', e);
-        }
+        glazeRepo.logActivity({
+          type: 'edit',
+          glazeId: savedId,
+          name: formData.name || '',
+          code: formData.code,
+          byName: auth.currentUser?.displayName || 'Anónimo',
+        }).catch(error => console.error('Error registrando actividad:', error));
       }
       // Tras guardar, la ficha NO se cierra: se mantiene abierta para seguir
       // editando. Se actualiza el baseline para que el estado quede "limpiado".
@@ -1626,8 +1617,23 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       setDirty(false);
       setLastSaved(true);
       window.setTimeout(() => setLastSaved(false), 3000);
-      onSuccess((activeCopyIndex >= 0 && originalData) ? (formData.status as GlazeStatus | undefined) : (data.status as GlazeStatus | undefined));
+      onSuccess(savedStatus);
     } catch (error) {
+      if (error instanceof GlazeConflictError) {
+        // No es un fallo: se detiene el guardado y se ofrece decidir al usuario.
+        pendingConflictRef.current = {
+          kind: activeCopyIndex >= 0 ? 'copies' : 'content',
+          forcedStatus,
+        };
+        const remote = await glazeRepo.get(effectiveId || '').catch(() => null);
+        setConflict({
+          fields: error.conflictingFields,
+          remoteEditor: remote?.authorName && remote.authorName !== (auth.currentUser?.displayName || '')
+            ? remote.authorName
+            : '',
+        });
+        return;
+      }
       console.error('Error guardando la ficha:', error);
       const raw = error instanceof Error ? error.message : String(error);
       const isUndefined = /undefined/i.test(raw);
@@ -1638,6 +1644,82 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  /** Descarta lo local y vuelve a cargar la versión del servidor. */
+  const handleConflictReload = useCallback(async () => {
+    if (!effectiveId) return;
+    setConflictSaving(true);
+    try {
+      const fresh = await glazeRepo.getWithCopies(effectiveId);
+      if (!fresh) {
+        setLoadError('No se ha encontrado la ficha. Puede que se haya eliminado.');
+        setConflict(null);
+        return;
+      }
+      const copy = activeCopyIndex >= 0 ? fresh.copies?.[activeCopyIndex] : null;
+      const nextForm = copy ? { ...copy, copies: fresh.copies || [] } : fresh;
+      setOriginalData(fresh);
+      setFormData(nextForm);
+      baselineRef.current = JSON.stringify(sanitizeForFirestore(nextForm));
+      setDirty(false);
+      setConflict(null);
+      setFlashMessage('Ficha recargada con la versión más reciente.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'No se pudo recargar la ficha.');
+    } finally {
+      setConflictSaving(false);
+    }
+  }, [effectiveId, activeCopyIndex]);
+
+  /** Repite el guardado indicando que sobrescriba los campos en conflicto. */
+  const handleConflictOverwrite = async () => {
+    if (!effectiveId) return;
+    setConflictSaving(true);
+    try {
+      if (pendingConflictRef.current?.kind === 'copies') {
+        const currentCopies = [...(formData.copies || [])];
+        if (!currentCopies[activeCopyIndex]) throw new Error('La copia ya no existe.');
+        currentCopies[activeCopyIndex] = buildCopyFromActiveForm(
+          activeCopyIndex + 1,
+          currentCopies[activeCopyIndex],
+          false,
+          pendingConflictRef.current.forcedStatus,
+        );
+        const afterSave = await glazeRepo.saveCopies(effectiveId, currentCopies, originalData || {}, true);
+        setOriginalData(afterSave);
+        const nextForm = { ...currentCopies[activeCopyIndex], copies: afterSave.copies || [] } as Partial<Glaze>;
+        setFormData(nextForm);
+        baselineRef.current = JSON.stringify(sanitizeForFirestore(nextForm));
+        setDirty(false);
+        setConflict(null);
+        pendingConflictRef.current = null;
+        setLastSaved(true);
+        window.setTimeout(() => setLastSaved(false), 3000);
+        setFlashMessage('Ficha guardada: tu versión ha predominado en los campos en conflicto.');
+      } else {
+        const nextData = {
+          ...formData,
+          isValidated: isCatalogStatus(formData.status as GlazeStatus),
+          copies: formData.copies || originalData?.copies || [],
+        } as Glaze;
+        const afterSave = await glazeRepo.saveContent(effectiveId, nextData, originalData || {}, true);
+        setOriginalData(afterSave);
+        setFormData(afterSave);
+        baselineRef.current = JSON.stringify(sanitizeForFirestore(afterSave));
+        setDirty(false);
+        setConflict(null);
+        pendingConflictRef.current = null;
+        setLastSaved(true);
+        window.setTimeout(() => setLastSaved(false), 3000);
+        setFlashMessage('Ficha guardada: tu versión ha predominado en los campos en conflicto.');
+      }
+    } catch (error) {
+      console.error('Error al sobrescribir tras conflicto:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo guardar la ficha.');
+    } finally {
+      setConflictSaving(false);
     }
   };
 
@@ -1682,14 +1764,14 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
   const showOnlyActiveVersion = isCatalogStatus(formData.status as GlazeStatus);
   const copySelectorIndexes = showOnlyActiveVersion && activeCopyIndex >= 0 ? [activeCopyIndex] : [0, 1, 2];
   const storedCopies = getStoredCopies();
-  const saveDestinations: Array<{ status: GlazeStatus; title: string; description: string }> = [
-    { status: 'draft', title: 'Guardar en Borrador pruebas', description: 'Trabajo interno o pruebas pendientes.' },
-    { status: 'validated', title: 'Guardar en Formulados', description: 'Formula lista, sin publicar en repositorio.' },
-    { status: 'published', title: 'Guardar en Repositorio', description: 'Ficha oficial publicada.' },
-  ];
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
+      {loadError && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+          {loadError}
+        </div>
+      )}
       <div className="space-y-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
@@ -1735,6 +1817,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex flex-wrap gap-3">
           <div className="flex min-w-[280px] flex-1 flex-col gap-2 sm:max-w-[520px]">
+            <DataNoticeBanner notice={dataNotice} onDismiss={() => setDataNotice(null)} />
 <div className="flex overflow-hidden rounded-xl border border-red-200 bg-white shadow-sm">
               <input
                 type="url"
@@ -1846,6 +1929,7 @@ Subir Excel (URLs o tablas)
           <button 
             type="submit" 
             disabled={loading || codeDuplicate}
+            title={`Guarda la ficha en la sección donde ya está. Usa el desplegable para cambiarla.`}
             className="flex items-center gap-2 rounded-xl bg-[#2D3436] px-6 py-2.5 text-sm font-medium text-white hover:bg-black disabled:opacity-50"
           >
             {loading ? <Spinner className="h-4 w-4 animate-spin" /> : <Save size={18} />}
@@ -1855,6 +1939,7 @@ Subir Excel (URLs o tablas)
             <button
               type="button"
               onClick={() => setSaveMenuOpen((prev) => !prev)}
+              title="Guardar en otra sección"
               className="flex items-center gap-1 rounded-xl border border-[#E4E4E2] px-3 py-2.5 text-sm font-medium text-[#2D3436] hover:bg-[#F7F7F5]"
               aria-haspopup="menu"
               aria-expanded={saveMenuOpen}
@@ -1892,7 +1977,10 @@ Subir Excel (URLs o tablas)
                         ) : (
                           <option.icon size={16} className="text-[#8a168a]" />
                         )}
-                        <span>Guardar en {option.label}</span>
+                        <span className="flex-1">Guardar en {option.label}</span>
+                        {activeCopyIndex >= 0
+                          ? activeCopy?.status === option.value
+                          : formData.status === option.value ? <CheckCircle2 size={16} className="text-[#2D3436]" /> : null}
                       </button>
                     ))}
                   </motion.div>
@@ -2253,16 +2341,23 @@ Subir Excel (URLs o tablas)
             <div className="flex items-center justify-between">
               <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Imagen Principal</h4>
               <label className="flex cursor-pointer items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#2D3436] hover:opacity-70 transition-all">
-                <Upload size={14} />
-                Subir Archivo
-                <input 
-                  type="file" 
-                  accept="image/*" 
-                  className="hidden" 
+                {imageUploading ? <Spinner className="h-3.5 w-3.5 animate-spin" /> : <Upload size={14} />}
+                {imageUploading ? 'Subiendo...' : 'Subir Archivo'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={imageUploading}
                   onChange={(e) => handleImageUpload(e)}
                 />
               </label>
             </div>
+            {imageError && (
+              <p className="flex items-center gap-2 text-xs font-medium text-red-600">
+                <AlertCircle size={14} />
+                {imageError}
+              </p>
+            )}
             <div className="group relative aspect-square overflow-hidden rounded-2xl bg-[#F7F7F5] border-2 border-dashed border-[#E4E4E2] flex flex-col items-center justify-center text-[#B2BEC3] hover:border-[#2D3436] hover:text-[#2D3436] transition-all">
               {formData.mainImage ? (
                 <>
@@ -2352,15 +2447,14 @@ Subir Excel (URLs o tablas)
                 </div>
               ))}
               {(formData.gallery?.length || 0) < 8 ? (
-                <label 
-                  className="flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#E4E4E2] text-[#B2BEC3] transition-all hover:border-[#2D3436] hover:text-[#2D3436] hover:bg-[#F4F4F2] cursor-pointer"
-                >
-                  <Plus size={24} />
-                  <span className="text-[10px] font-bold uppercase tracking-widest mt-1">Añadir Foto</span>
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    className="hidden" 
+                <label className="flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#E4E4E2] text-[#B2BEC3] transition-all hover:border-[#2D3436] hover:text-[#2D3436] hover:bg-[#F4F4F2] cursor-pointer">
+                  {imageUploading ? <Spinner className="h-6 w-6 animate-spin" /> : <Plus size={24} />}
+                  <span className="text-[10px] font-bold uppercase tracking-widest mt-1">{imageUploading ? 'Subiendo...' : 'Añadir Foto'}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={imageUploading}
                     onChange={(e) => {
                       handleImageUpload(e, -1);
                     }}
@@ -2375,31 +2469,6 @@ Subir Excel (URLs o tablas)
             {(formData.gallery?.length || 0) >= 4 && (
               <p className="text-[10px] text-amber-600 mt-2 font-medium">Nota: Guarda la ficha continuamente. Múltiples fotos consumen capacidad del documento gratis.</p>
             )}
-          </div>
-
-          <div className="rounded-[24px] bg-white p-8 shadow-sm space-y-6">
-            <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Destino al guardar</h4>
-            <div className="space-y-3">
-              {saveDestinations.map(({ status, title, description }) => (
-                <button
-                  key={status}
-                  type="button"
-                  onClick={() => setFormData({ ...formData, status })}
-                  className={cn(
-                    "flex w-full items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left transition-all",
-                    formData.status === status ? "border-[#2D3436] bg-[#2D3436] text-white" : "border-[#E4E4E2] text-[#636E72] hover:bg-[#F7F7F5]"
-                  )}
-                >
-                  <span>
-                    <span className="block text-xs font-bold uppercase tracking-widest">{title}</span>
-                    <span className={cn("mt-1 block text-[11px] font-medium normal-case tracking-normal", formData.status === status ? "text-white/75" : "text-[#636E72]")}>
-                      {description}
-                    </span>
-                  </span>
-                  {formData.status === status && <CheckCircle size={14} />}
-                </button>
-              ))}
-            </div>
           </div>
 
           <div className="rounded-[24px] bg-[#2D3436] p-8 text-white shadow-sm space-y-4">
@@ -2424,10 +2493,19 @@ Subir Excel (URLs o tablas)
           setShowRecalculo(false);
         }}
       />
+
+      <ConflictModal
+        open={conflict !== null}
+        fields={conflict?.fields || []}
+        remoteEditor={conflict?.remoteEditor}
+        saving={conflictSaving}
+        onReload={handleConflictReload}
+        onOverwrite={handleConflictOverwrite}
+        onClose={() => {
+          setConflict(null);
+          pendingConflictRef.current = null;
+        }}
+      />
     </form>
   );
-}
-
-function CheckCircle({ size }: { size: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
 }

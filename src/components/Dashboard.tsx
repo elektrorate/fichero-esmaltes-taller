@@ -1,25 +1,17 @@
 import { useState, useEffect, useMemo } from 'react';
-import { auth, db } from '../lib/firebase';
-import { collection, query, limit, orderBy, onSnapshot } from 'firebase/firestore';
+import { glazeRepo, activityRepo, toMillis, formatDate, RECALCULOS_COLLECTION, type ActivityEvent } from '../lib/glazesRepo';
+import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { Glaze, UserProfile } from '../types';
 import { motion } from 'motion/react';
 import { Database, Clock, CheckCircle, AlertCircle, TrendingUp } from 'lucide-react';
 
 interface DashboardProps {
-  onNavigate: (view: any, id?: string) => void;
+  onNavigate: (view: string, id?: string) => void;
   profile: UserProfile | null;
 }
 
-interface ActivityEvent {
-  id: string;
-  type: 'edit' | 'recalc' | 'publish';
-  glazeId?: string;
-  name: string;
-  code?: string;
-  area?: boolean;
-  byName?: string;
-  at: any;
-}
+export type { ActivityEvent };
 
 const EDITION_LABELS: Record<ActivityEvent['type'], string> = {
   edit: 'Ficha modificada',
@@ -27,65 +19,35 @@ const EDITION_LABELS: Record<ActivityEvent['type'], string> = {
   publish: 'Publicada',
 };
 
-const getDateMs = (value: any): number => {
-  if (!value) return 0;
-  if (typeof value.toDate === 'function') return value.toDate().getTime();
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
-};
-
-const fmtShortDate = (value: any): string => {
-  if (!value) return 'Reciente';
-  try {
-    const date = typeof value.toDate === 'function' ? value.toDate() : new Date(value);
-    return date.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
-  } catch {
-    return 'Reciente';
-  }
-};
+const getDateMs = toMillis;
+const fmtShortDate = (value: unknown) => formatDate(value, 'Reciente');
 
 type RecentItem = Glaze & { inRecalculoArea?: boolean };
 
 export default function Dashboard({ onNavigate, profile }: DashboardProps) {
-  const uid = profile?.uid ?? auth.currentUser?.uid ?? null;
+  const uid = profile?.uid ?? null;
   const [glazes, setGlazes] = useState<Glaze[]>([]);
   const [recalcItems, setRecalcItems] = useState<Glaze[]>([]);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
 
-  useEffect(() => {
-    const glazesRef = collection(db, 'glazes');
-    const unsubscribe = onSnapshot(glazesRef, (snapshot) => {
-      setGlazes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Glaze)));
-    });
-    return () => unsubscribe();
-  }, []);
+  useEffect(() => glazeRepo.subscribeAll(
+    (items) => setGlazes(items),
+    error => console.error('Error cargando las fichas:', error),
+  ), []);
 
-  useEffect(() => {
-    const unsubscribe = onSnapshot(
-      query(collection(db, 'activity'), orderBy('at', 'desc'), limit(15)),
-      (snapshot) => {
-        setActivity(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ActivityEvent)));
-      },
-      (error) => {
-        console.error('Error cargando historial de actividad:', error);
-      },
-    );
-    return () => unsubscribe();
-  }, []);
+  useEffect(() => activityRepo.subscribeRecent(
+    15,
+    (events) => setActivity(events as ActivityEvent[]),
+    error => console.error('Error cargando historial de actividad:', error),
+  ), []);
 
   useEffect(() => {
     if (!uid) return;
-    const itemRef = collection(db, `recalculos/${uid}/items`);
-    const unsubscribe = onSnapshot(
-      query(itemRef, orderBy('updatedAt', 'desc')),
-      (snapshot) => {
-        setRecalcItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Glaze)));
-      },
-      (error) => {
-        console.error('Error cargando área de recálculo en dashboard:', error);
-      },
+    return onSnapshot(
+      query(collection(db, `${RECALCULOS_COLLECTION}/${uid}/items`), orderBy('updatedAt', 'desc')),
+      (snapshot) => setRecalcItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Glaze))),
+      (error) => console.error('Error cargando área de recálculo en dashboard:', error),
     );
-    return () => unsubscribe();
   }, [uid]);
 
   const stats = useMemo(() => ({
@@ -105,9 +67,9 @@ export default function Dashboard({ onNavigate, profile }: DashboardProps) {
 
   const cards = [
     { label: 'Total Esmaltes', value: stats.total, icon: Database, color: 'text-blue-500', bg: 'bg-blue-50' },
-    { label: 'En Recálculo', value: recalcItems.length, icon: Clock, color: 'text-purple-500', bg: 'bg-purple-50' },
     { label: 'Pendientes', value: stats.pending, icon: AlertCircle, color: 'text-amber-500', bg: 'bg-amber-50' },
     { label: 'Formulados', value: stats.validated, icon: CheckCircle, color: 'text-emerald-500', bg: 'bg-emerald-50' },
+    { label: 'Inventario bajo', value: stats.lowInventory.length, icon: Clock, color: 'text-purple-500', bg: 'bg-purple-50' },
   ];
 
   const badgeToneClass: Record<string, string> = {
@@ -131,8 +93,7 @@ export default function Dashboard({ onNavigate, profile }: DashboardProps) {
         date: fmtShortDate(ev.at),
         imgSeed: ev.glazeId || ev.id,
         onOpen: () => {
-          if (ev.type === 'recalc') onNavigate('recalculo');
-          else if (ev.glazeId) onNavigate('detail', ev.glazeId);
+          if (ev.glazeId) onNavigate('detail', ev.glazeId);
         },
       }));
     }

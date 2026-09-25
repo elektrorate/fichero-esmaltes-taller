@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { db, auth, OperationType, handleFirestoreError } from '../lib/firebase';
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc, getDoc, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { glazeRepo, toMillis, type GlazeRepoError } from '../lib/glazesRepo';
 import { Glaze, GlazeStatus, UserProfile } from '../types';
 import { STATUS_LABELS, ORTON_CONES, matchesOrtonCone } from '../constants';
 import { generateBulkPDF } from '../lib/pdfUtils';
@@ -15,9 +14,18 @@ const FILTER_OPTIONS = {
   usages: ['Apto para vajilla / food safe', 'Decorativo']
 };
 
+export interface GlazeListFilters {
+  color?: string;
+  finish?: string;
+  texture?: string;
+  chemicalFamily?: string;
+  temperature?: string;
+  status?: string;
+}
+
 interface GlazeListProps {
   searchQuery?: string;
-  activeFilters?: any;
+  activeFilters?: GlazeListFilters;
   statusScope?: GlazeStatus[];
   highlightInventoryAlerts?: boolean;
   showStatusFilter?: boolean;
@@ -44,12 +52,7 @@ const STATUS_BADGE_STYLES: Record<GlazeStatus, string> = {
 
 const isPublishedStatus = (status: GlazeStatus) => status === 'published';
 
-const getSortableDate = (value: any) => {
-  if (!value) return 0;
-  if (typeof value.toDate === 'function') return value.toDate().getTime();
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
-};
+const getSortableDate = toMillis;
 
 export default function GlazeList({
   searchQuery = '',
@@ -68,7 +71,7 @@ export default function GlazeList({
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isSendingToFormuladas, setIsSendingToFormuladas] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const [filterColor, setFilterColor] = useState('');
   const [filterFinish, setFilterFinish] = useState('');
@@ -79,11 +82,17 @@ export default function GlazeList({
   const [filterStatus, setFilterStatus] = useState<GlazeStatus | ''>('');
 
   useEffect(() => {
-    const q = query(collection(db, 'glazes'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setGlazes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Glaze)));
-      setLoading(false);
-    });
+    const unsubscribe = glazeRepo.subscribeAll(
+      (items) => {
+        setGlazes(items);
+        setLoading(false);
+      },
+      (error: GlazeRepoError) => {
+        console.error('Error cargando el repositorio:', error);
+        setLoadError(error.message);
+        setLoading(false);
+      },
+    );
     return () => unsubscribe();
   }, []);
 
@@ -222,68 +231,29 @@ export default function GlazeList({
           return groups;
         }, {});
 
-      await Promise.all(originalTargets.map(g => deleteDoc(doc(db, 'glazes', g.parentId))));
-      await Promise.all(Object.entries(copyTargetsByParent).map(async ([parentId, copyIndexes]) => {
-        const glazeRef = doc(db, 'glazes', parentId);
-        const snapshot = await getDoc(glazeRef);
-        if (!snapshot.exists()) return;
-
-        const glaze = snapshot.data() as Glaze;
-        const indexesToDelete = new Set(copyIndexes);
-        const nextCopies = (glaze.copies || []).filter((_, index) => !indexesToDelete.has(index));
-        await setDoc(glazeRef, {
-          ...glaze,
-          copies: nextCopies,
-          updatedAt: serverTimestamp(),
-        });
-      }));
+      await Promise.all(originalTargets.map(g => glazeRepo.remove(g.parentId)));
+      await Promise.all(Object.entries(copyTargetsByParent).map(([parentId, copyIndexes]) =>
+        glazeRepo.removeCopies(parentId, copyIndexes),
+      ));
       setIsSelectionMode(false);
       setSelectedIds([]);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'glazes');
+      alert(error instanceof Error ? error.message : 'No se pudieron eliminar las fichas seleccionadas.');
     } finally {
       setIsDeleting(false);
     }
   };
 
-  const handleBulkSendToFormuladas = async () => {
-    const targets = filteredGlazes.filter(g => selectedIds.includes(g.displayId));
-    if (targets.length === 0) return;
-    if (!auth.currentUser) {
-      alert('Debes iniciar sesión para enviar fichas a Formuladas.');
-      return;
-    }
-    setIsSendingToFormuladas(true);
-    try {
-      const uid = auth.currentUser.uid;
-      await Promise.all(targets.map(async (glaze) => {
-        await addDoc(collection(db, `formuladas/${uid}/items`), {
-          ...glaze,
-          id: undefined,
-          copies: undefined,
-          status: 'draft',
-          isValidated: false,
-          scope: 'formuladas',
-          sourceGlazeId: glaze.parentId,
-          sourceCode: glaze.code || 'FICHA',
-          authorId: uid,
-          authorName: auth.currentUser?.displayName || 'Anónimo',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }));
-      setIsSelectionMode(false);
-      setSelectedIds([]);
-    } catch (error) {
-      console.error('Error enviando a Formuladas:', error);
-      handleFirestoreError(error, OperationType.CREATE, 'formuladas');
-    } finally {
-      setIsSendingToFormuladas(false);
-    }
-  };
-
   if (loading) {
     return <div className="flex justify-center py-20 text-[#636E72]">Cargando repositorio...</div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm font-medium text-red-700">
+        No se pudo cargar el repositorio: {loadError}
+      </div>
+    );
   }
 
   return (
@@ -323,28 +293,6 @@ export default function GlazeList({
                   <>
                     <Download size={18} />
                     Exportar PDF ({selectedIds.length})
-                  </>
-                )}
-              </motion.button>
-            )}
-            {isSelectionMode && selectedIds.length > 0 && profile?.role === 'admin' && (
-              <motion.button
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                onClick={handleBulkSendToFormuladas}
-                disabled={isSendingToFormuladas}
-                className="flex items-center gap-2 rounded-xl bg-[#8a168a] px-4 py-2 text-sm font-medium text-white hover:bg-[#6d0f6d] disabled:opacity-70"
-              >
-                {isSendingToFormuladas ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Enviando...
-                  </>
-                ) : (
-                  <>
-                    <Tag size={18} />
-                    Enviar a Formuladas ({selectedIds.length})
                   </>
                 )}
               </motion.button>
@@ -581,7 +529,9 @@ export default function GlazeList({
                               <span className="text-[11px] font-medium text-[#636E72]">{glaze.authorName}</span>
                             </div>
                             <span className="text-[11px] text-[#8a168a]">
-                              {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
+                              {toMillis(glaze.createdAt)
+                                ? new Date(toMillis(glaze.createdAt) as number).toLocaleDateString()
+                                : 'Reciente'}
                             </span>
                           </div>
                         </div>
@@ -694,7 +644,9 @@ export default function GlazeList({
                   <span className="text-[11px] font-medium text-[#636E72]">{glaze.authorName}</span>
                 </div>
                 <span className="text-[11px] text-[#8a168a]">
-                  {glaze.createdAt?.toDate ? glaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
+                  {toMillis(glaze.createdAt)
+                    ? new Date(toMillis(glaze.createdAt) as number).toLocaleDateString()
+                    : 'Reciente'}
                 </span>
               </div>
             </div>

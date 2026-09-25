@@ -1,4 +1,14 @@
+import type { Timestamp } from 'firebase/firestore';
+
 export type UserRole = 'admin' | 'editor' | 'collaborator' | 'reviewer';
+
+/**
+ * Marca temporal de Firestore. Antes de escribir se usan `Timestamp` de
+ * servidor; las copias internas pueden llevar `Date` del cliente porque
+ * viajan dentro de un array del mismo documento. `toMillis()` de
+ * `lib/glazesRepo` normaliza ambos casos para ordenar y formatear.
+ */
+export type TimestampValue = Timestamp | Date | string | number | null;
 
 export interface UserProfile {
   uid: string;
@@ -6,7 +16,7 @@ export interface UserProfile {
   displayName: string;
   photoURL: string;
   role: UserRole;
-  createdAt: any;
+  createdAt: TimestampValue;
 }
 
 export type GlazeStatus = 'draft' | 'pending' | 'validated' | 'published' | 'archived';
@@ -43,8 +53,8 @@ export interface Glaze {
   status: GlazeStatus;
   authorId: string;
   authorName: string;
-  createdAt: any;
-  updatedAt: any;
+  createdAt: TimestampValue;
+  updatedAt: TimestampValue;
   isValidated: boolean;
   inventoryLevel?: number;
   copies?: GlazeCopy[];
@@ -59,8 +69,8 @@ export interface Glaze {
 export interface GlazeCopy extends Omit<Glaze, 'id' | 'createdAt' | 'updatedAt' | 'copies'> {
   copyId: string;
   sourceCode: string;
-  createdAt: any;
-  updatedAt: any;
+  createdAt: TimestampValue;
+  updatedAt: TimestampValue;
 }
 
 export interface Comment {
@@ -69,7 +79,7 @@ export interface Comment {
   authorId: string;
   authorName: string;
   text: string;
-  createdAt: any;
+  createdAt: TimestampValue;
 }
 
 export interface TechSpecs {

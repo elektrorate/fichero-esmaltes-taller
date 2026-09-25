@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, doc, onSnapshot, query, updateDoc } from 'firebase/firestore';
 import { Boxes, PackageSearch, Search, SlidersHorizontal } from 'lucide-react';
-import { db } from '../lib/firebase';
+import { glazeRepo } from '../lib/glazesRepo';
 import { Glaze } from '../types';
 import { cn, matchesSearch } from '../lib/utils';
 
@@ -16,23 +15,17 @@ export default function SettingsPanel() {
   const [activeFilter, setActiveFilter] = useState<InventoryFilter>('all');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
 
-  useEffect(() => {
-    const q = query(collection(db, 'glazes'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setGlazes(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() } as Glaze)));
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
+  useEffect(() => glazeRepo.subscribeAll(
+    (items) => { setGlazes(items); setLoading(false); },
+    error => { console.error('Error cargando el inventario:', error); setLoading(false); },
+  ), []);
 
   const updateInventory = async (id: string, level: number) => {
     try {
-      await updateDoc(doc(db, 'glazes', id), {
-        inventoryLevel: level,
-      });
+      await glazeRepo.update(id, { inventoryLevel: level });
     } catch (error) {
       console.error('Error updating inventory:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo actualizar el inventario.');
     }
   };
 

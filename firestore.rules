@@ -1,25 +1,104 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{userId} {
-      allow read, write: if request.auth != null;
+
+    // --- Helpers ---------------------------------------------------------
+
+    // Administrador ya registrado. Antes de leer un documento `users`, esta
+    // función se evalúa con el documento de quien solicita la operación.
+    function isAdmin() {
+      return request.auth != null
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
+    // Administrador semilla: es el único email que puede crearse a sí mismo
+    // con rol `admin`. Cualquier otro usuario nace como `collaborator` y jamás
+    // puede escribir `role: 'admin'` sobre su propio documento.
+    function isSeedAdmin() {
+      return request.auth != null
+          && request.auth.token.email == 'erick@kgbycia.com';
+    }
+
+    // Autenticado. Se mantiene la política abierta de escritura sobre fichas
+    // que tenía la app antes de este cambio (cualquier usuario autenticado
+    // guarda y edita). Restringir por rol ('reviewer' como solo-lectura) es
+    // un paso siguiente: hoy la UI no distingue roles al escribir, y
+    // aplicarlo ahora dejaría al taller sin poder guardar fichas.
+    function canWriteGlazes() {
+      return request.auth != null;
+    }
+
+    // --- Usuarios --------------------------------------------------------
+
+    match /users/{userId} {
+      allow read: if request.auth != null;
+
+      // Alta del propio perfil en el primer inicio de sesión. Solo el
+      // administrador semilla puede nacer como `admin`.
+      allow create: if request.auth != null
+                    && request.auth.uid == userId
+                    && (request.resource.data.role != 'admin' || isSeedAdmin());
+
+      // Un admin puede editar cualquier perfil, incluido el rol: es la función
+      // del panel de administración.
+      //
+      // Única salvedad: un admin no puede modificar su propio documento, para
+      // no poder degradarse o dejarse sin acceso. La excepción es el
+      // administrador semilla, que sí puede repararse a sí mismo (por ejemplo
+      // restituir su rol si se editó a mano desde la consola).
+      allow update: if (isAdmin() && request.auth.uid != userId)
+                    || (isSeedAdmin() && request.auth.uid == userId);
+
+      // Nadie borra su propia cuenta desde el panel.
+      allow delete: if isAdmin() && request.auth.uid != userId;
+    }
+
+    // --- Sonda de conectividad -------------------------------------------
+
+    // `lib/firebase.ts` lee este documento al arrancar para comprobar que la
+    // red responde. El error se ignora a propósito, así que basta con permitir
+    // la lectura: si se denegara, la app seguiría funcionando igual.
+    match /test/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // --- Fichas ----------------------------------------------------------
+
     match /glazes/{glazeId} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow create, update, delete: if canWriteGlazes();
 
       match /comments/{commentId} {
-        allow read, write: if request.auth != null;
+        allow read: if request.auth != null;
+        allow create: if canWriteGlazes();
+        allow update, delete: if canWriteGlazes()
+                              && resource.data.authorId == request.auth.uid;
       }
     }
 
+    // --- Historial -------------------------------------------------------
+
     match /activity/{eventId} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      // El historial es un log append-only.
+      allow update, delete: if false;
     }
 
+    // --- Invitaciones ----------------------------------------------------
+
     match /invites/{email} {
-      allow read, write: if request.auth != null;
+      // El admin gestiona el listado; el invitado puede leer y consumir la suya
+      // al registrarse por primera vez (App.tsx la borra en ese momento).
+      allow read: if isAdmin() || (request.auth != null && request.auth.token.email == email);
+      allow create: if isAdmin();
+      allow delete: if isAdmin() || (request.auth != null && request.auth.token.email == email);
+      allow update: if false;
     }
+
+    // --- Áreas personales ------------------------------------------------
+    // Cada usuario solo accede a sus propios programas y áreas de trabajo.
 
     match /firingPrograms/{userId}/programs/{programId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -31,6 +110,11 @@ service cloud.firestore {
 
     match /formuladas/{userId}/items/{itemId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Cualquier otra ruta queda denegada por defecto.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { db, auth } from '../lib/firebase';
-import { doc, onSnapshot, collection, addDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
-import { Glaze, Comment, UserProfile } from '../types';
+import { subscribeGlaze, commentsRepo, toMillis, type GlazeRepoError } from '../lib/glazesRepo';
+import { Comment, Glaze, UserProfile } from '../types';
 import { STATUS_LABELS } from '../constants';
 import { generateGlazePDF } from '../lib/pdfUtils';
 import { motion } from 'motion/react';
@@ -22,23 +21,35 @@ export default function GlazeDetail({ id, initialCopyIndex = null, profile = nul
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const [activeImage, setActiveImage] = useState<string | null>(null);
   const [activeCopyIndex, setActiveCopyIndex] = useState(-1);
 
   useEffect(() => {
-    const unsubscribeGlaze = onSnapshot(doc(db, 'glazes', id), (doc) => {
-      if (doc.exists()) {
-        const nextGlaze = { id: doc.id, ...doc.data() } as Glaze;
-        setGlaze(nextGlaze);
-      }
+    const onError = (error: GlazeRepoError) => {
+      console.error('Error cargando la ficha:', error);
+      setLoadError(error.message);
       setLoading(false);
-    });
-
-    const q = query(collection(db, 'glazes', id, 'comments'), orderBy('createdAt', 'asc'));
-    const unsubscribeComments = onSnapshot(q, (snapshot) => {
-      setComments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Comment)));
-    });
+    };
+    const unsubscribeGlaze = subscribeGlaze(
+      id,
+      (nextGlaze) => {
+        if (nextGlaze) {
+          setGlaze(nextGlaze);
+          setLoadError('');
+        } else {
+          setLoadError('No se ha encontrado la ficha. Puede que se haya eliminado.');
+        }
+        setLoading(false);
+      },
+      onError,
+    );
+    const unsubscribeComments = commentsRepo.subscribe(
+      id,
+      (items) => setComments(items),
+      error => console.error('Error cargando los comentarios:', error),
+    );
 
     return () => {
       unsubscribeGlaze();
@@ -53,18 +64,14 @@ export default function GlazeDetail({ id, initialCopyIndex = null, profile = nul
 
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newComment.trim()) return;
+    const text = newComment.trim();
+    if (!text) return;
     try {
-      await addDoc(collection(db, 'glazes', id, 'comments'), {
-        glazeId: id,
-        authorId: auth.currentUser?.uid,
-        authorName: auth.currentUser?.displayName || 'Anónimo',
-        text: newComment,
-        createdAt: serverTimestamp()
-      });
+      await commentsRepo.add(id, text);
       setNewComment('');
     } catch (error) {
       console.error('Error adding comment:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo añadir el comentario.');
     }
   };
 
@@ -84,7 +91,7 @@ export default function GlazeDetail({ id, initialCopyIndex = null, profile = nul
   };
 
   if (loading) return <div className="py-20 text-center text-[#636E72]">Cargando ficha técnica...</div>;
-  if (!glaze) return <div className="py-20 text-center text-[#636E72]">Ficha no encontrada.</div>;
+  if (!glaze) return <div className="py-20 text-center text-[#636E72]">{loadError || 'Ficha no encontrada.'}</div>;
   const activeCopy = activeCopyIndex >= 0 ? glaze.copies?.[activeCopyIndex] : null;
   const visibleGlaze = activeCopy || glaze;
   // Las secciones técnicas se muestran/exportan desde la entidad visible (copia activa
@@ -289,7 +296,9 @@ export default function GlazeDetail({ id, initialCopyIndex = null, profile = nul
                     <p className="text-[10px] font-bold uppercase tracking-widest text-[#8a168a]">Creado</p>
                   </div>
                   <p className="text-sm font-medium">
-                    {visibleGlaze.createdAt?.toDate ? visibleGlaze.createdAt.toDate().toLocaleDateString() : 'Reciente'}
+                    {toMillis(visibleGlaze.createdAt)
+                      ? new Date(toMillis(visibleGlaze.createdAt) as number).toLocaleDateString()
+                      : 'Reciente'}
                   </p>
                 </div>
               </div>
@@ -309,7 +318,9 @@ export default function GlazeDetail({ id, initialCopyIndex = null, profile = nul
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold text-[#2D3436]">{comment.authorName}</span>
                     <span className="text-[9px] text-[#8a168a]">
-                      {comment.createdAt?.toDate ? comment.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Ahora'}
+                      {toMillis(comment.createdAt)
+                        ? new Date(toMillis(comment.createdAt) as number).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : 'Ahora'}
                     </span>
                   </div>
                   <p className="rounded-2xl bg-[#F7F7F5] p-3 text-xs text-[#636E72]">{comment.text}</p>
