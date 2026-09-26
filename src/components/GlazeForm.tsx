@@ -1374,95 +1374,141 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     }
   };
 
+  /**
+   * Comprime la foto y la deja en el formulario. Lanza si algo falla para que
+   * quien llama pueda avisar: si esta función fallara en silencio, el spinner
+   * de "Subiendo..." se quedaría girando indefinidamente.
+   */
+  const storeCompressedImage = async (
+    img: HTMLImageElement,
+    targetIdx?: number,
+  ): Promise<void> => {
+    const canvas = document.createElement('canvas');
+    const MAX_WIDTH = 800;
+    const MAX_HEIGHT = 800;
+    const sourceWidth = img.naturalWidth || img.width;
+    const sourceHeight = img.naturalHeight || img.height;
+
+    if (!sourceWidth || !sourceHeight) {
+      throw new Error('La imagen no tiene tamaño válido.');
+    }
+
+    let width = sourceWidth;
+    let height = sourceHeight;
+
+    if (width > height) {
+      if (width > MAX_WIDTH) {
+        height *= MAX_WIDTH / width;
+        width = MAX_WIDTH;
+      }
+    } else if (height > MAX_HEIGHT) {
+      width *= MAX_HEIGHT / height;
+      height = MAX_HEIGHT;
+    }
+
+    canvas.width = Math.round(width);
+    canvas.height = Math.round(height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('El navegador no pudo procesar la imagen.');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    // JPEG al 55% mantiene la foto entre 30 y 90 KB: por debajo del límite
+    // de 1 MiB del documento incluso con la galería completa.
+    const compressed = canvas.toDataURL('image/jpeg', 0.55);
+    const blob = await (await fetch(compressed)).blob();
+
+    if (blob.size > MAX_IMAGE_BYTES) {
+      throw new Error('La foto sigue siendo demasiado grande aun después de comprimirla. Usa una imagen más pequeña.');
+    }
+
+    // Se intenta Storage; si el proyecto no lo tiene configurado se
+    // conserva el data-URL para no perder la imagen.
+    const uploaded = await uploadGlazeImage(
+      blob,
+      `glazes/${effectiveId ?? 'new'}/${crypto.randomUUID()}.jpg`,
+    );
+    const value = uploaded ?? compressed;
+    if (!uploaded) {
+      setImageMessage('Imagen guardada dentro de la ficha (Storage no disponible). No añadas muchas fotos o el guardado fallará.');
+    }
+
+    setFormData(prev => {
+      if (targetIdx === undefined) {
+        return { ...prev, mainImage: value };
+      }
+      const newGallery = [...(prev.gallery || [])];
+      if (!prev.mainImage && targetIdx === -1) {
+        return { ...prev, mainImage: value };
+      }
+      if (!prev.mainImage && targetIdx >= 0) {
+        newGallery.splice(targetIdx, 1);
+        return { ...prev, mainImage: value, gallery: newGallery };
+      }
+      if (targetIdx === -1) {
+        newGallery.push(value);
+      } else {
+        newGallery[targetIdx] = value;
+      }
+      if (newGallery.length < 8) {
+        newGallery.push('');
+      }
+      return { ...prev, gallery: newGallery };
+    });
+  };
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, targetIdx?: number) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      alert('Por favor selecciona un archivo de imagen válido.');
+    // HEIC/HEIF es el formato por defecto de las fotos de iPhone y ningún
+    // navegador lo convierte a algo que se pueda dibujar en un canvas. Sin
+    // este aviso la imagen se quedaba "Subiendo..." para siempre.
+    const isHeic = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']
+      .includes(file.type.toLowerCase())
+      || /\.hei[cf]$/i.test(file.name);
+    if (isHeic) {
+      setImageError('El formato HEIC/HEIF de iPhone no se puede subir. Convierte la foto a JPG y vuelve a intentarlo.');
+      return;
+    }
+
+    // Algunos móviles entregan el archivo sin tipo, así que también se mira la
+    // extensión antes de rechazar la imagen.
+    const looksLikeImage = file.type.startsWith('image/')
+      || /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(file.name);
+    if (!looksLikeImage) {
+      setImageError('Selecciona un archivo de imagen (JPG, PNG o WebP).');
       return;
     }
 
     setImageUploading(true);
     setImageError('');
+    setImageMessage('');
+
+    const fail = (message: string) => {
+      setImageUploading(false);
+      setImageError(message);
+    };
 
     const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = async (event) => {
+    reader.onerror = () => fail('No pude leer el archivo. Puede que esté dañado o protegido.');
+    reader.onload = () => {
       const img = new Image();
-      img.src = event.target?.result as string;
-      img.onload = async () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800;
-        const MAX_HEIGHT = 800;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-
-        // JPEG al 55% mantiene la foto entre 30 y 90 KB: por debajo del límite
-        // de 1 MiB del documento incluso con la galería completa.
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.55);
-        const blob = await (await fetch(dataUrl)).blob();
-
-        if (blob.size > MAX_IMAGE_BYTES) {
-          setImageError('La foto sigue siendo demasiado grande aun después de comprimirla. Usa una imagen más pequeña.');
-          setImageUploading(false);
-          return;
-        }
-
-        // Se intenta Storage; si el proyecto no lo tiene configurado se
-        // conserva el data-URL para no perder la imagen.
-        const uploaded = await uploadGlazeImage(
-          blob,
-          `glazes/${effectiveId ?? 'new'}/${crypto.randomUUID()}.jpg`,
-        );
-        const value = uploaded ?? dataUrl;
-        if (!uploaded) {
-          setImageMessage('Imagen guardada dentro de la ficha (Storage no disponible). No añadas muchas fotos o el guardado fallará.');
-        }
-
-        setFormData(prev => {
-          if (targetIdx === undefined) {
-            return { ...prev, mainImage: value };
-          }
-          const newGallery = [...(prev.gallery || [])];
-          if (!prev.mainImage && targetIdx === -1) {
-            return { ...prev, mainImage: value };
-          }
-          if (!prev.mainImage && targetIdx >= 0) {
-            newGallery.splice(targetIdx, 1);
-            return { ...prev, mainImage: value, gallery: newGallery };
-          }
-          if (targetIdx === -1) {
-            newGallery.push(value);
-          } else {
-            newGallery[targetIdx] = value;
-          }
-          if (newGallery.length < 8) {
-            newGallery.push('');
-          }
-          return { ...prev, gallery: newGallery };
-        });
-        setImageUploading(false);
+      img.onerror = () => fail(
+        'El navegador no pudo abrir esta imagen. Si es una foto de iPhone, conviértela a JPG: las fotos en HEIC no se pueden subir.',
+      );
+      // El manejador se asigna antes que `src`: con una data URL la carga puede
+      // ser inmediata y `onload` se perdería.
+      img.onload = () => {
+        storeCompressedImage(img, targetIdx)
+          .catch(error => {
+            setImageError(error instanceof Error ? error.message : 'No pude subir la foto.');
+          })
+          .finally(() => setImageUploading(false));
       };
+      img.src = String(reader.result || '');
     };
+    reader.readAsDataURL(file);
   };
 
   const handleDelete = async () => {

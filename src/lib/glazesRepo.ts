@@ -525,12 +525,26 @@ export const commentsRepo = {
 export async function uploadGlazeImage(file: Blob, path: string): Promise<string | null> {
   const storage = getGlazeStorage();
   if (!storage) return null;
+
+  // Una subida que se queda colgada por la red dejaría la ficha en
+  // "Subiendo..." indefinidamente. Con límite de tiempo se cae al data-URL y
+  // la foto se conserva igualmente.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('La subida a Storage tardó demasiado')), 20000);
+  });
+
   try {
-    const snapshot = await uploadBytes(ref(storage, path), file, { contentType: file.type || 'image/jpeg' });
-    return await getDownloadURL(snapshot.ref);
+    const snapshot = await Promise.race([
+      uploadBytes(ref(storage, path), file, { contentType: file.type || 'image/jpeg' }),
+      timeout,
+    ]);
+    return await Promise.race([getDownloadURL(snapshot.ref), timeout]);
   } catch (error) {
     console.warn('No se pudo subir la imagen a Storage, se guarda incrustada:', error);
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
