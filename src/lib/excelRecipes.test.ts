@@ -7,9 +7,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildGlazeFromRecipeSheet,
+  extractPositionalItems,
   extractRecipeItems,
   hasMaterialColumn,
   hasNameColumn,
+  isHeaderCell,
   parseExcelAmount,
   parsePackedMaterias,
   type TableColumn,
@@ -205,5 +207,114 @@ describe('parsePackedMaterias', () => {
 
   it('lee "material, cantidad"', () => {
     expect(parsePackedMaterias('Caolín, 200 g')).toEqual([{ material: 'Caolín', amount: 200 }]);
+  });
+});
+
+describe('isHeaderCell', () => {
+  it('reconoce palabras de encabezado', () => {
+    expect(isHeaderCell('Material')).toBe(true);
+    expect(isHeaderCell('cantidad (g)')).toBe(true);
+    expect(isHeaderCell('  Cantidad  ')).toBe(true);
+    expect(isHeaderCell('Materia Prima')).toBe(true);
+  });
+
+  it('no confunde un material que contiene una palabra de encabezado', () => {
+    // Contiene "oxido" pero es un material, no el encabezado de una columna.
+    expect(isHeaderCell('Óxido de cobalto')).toBe(false);
+    expect(isHeaderCell('Carbonato de bario')).toBe(false);
+    expect(isHeaderCell('Sílice 325')).toBe(false);
+  });
+
+  it('trata la celda vacía como encabezado', () => {
+    expect(isHeaderCell('')).toBe(true);
+    expect(isHeaderCell(null)).toBe(true);
+  });
+});
+
+describe('extractPositionalItems', () => {
+  it('toma el primer texto como material y el primer número como cantidad', () => {
+    expect(extractPositionalItems(['Óxido de cobalto', '3,5'])).toEqual([
+      { material: 'Óxido de cobalto', amount: 3.5 },
+    ]);
+  });
+
+  it('no usa un número como nombre de material', () => {
+    expect(extractPositionalItems(['5'])).toEqual([]);
+  });
+
+  it('descarta la palabra de encabezado como material', () => {
+    expect(extractPositionalItems(['Material', 'Cantidad'])).toEqual([]);
+  });
+
+  it('tolera columnas vacías delante', () => {
+    expect(extractPositionalItems(['', '', 'Caolín', '', '20'])).toEqual([
+      { material: 'Caolín', amount: 20 },
+    ]);
+  });
+});
+
+/**
+ * Formas reales de hojas de receta que hicieron fallar al primer importador: la
+ * fila de encabezado no existe, así que el detector tomaba el primer material
+ * como si fuera el encabezado y la hoja terminaba sin materiales.
+ */
+describe('hojas de receta sin fila de encabezado', () => {
+  it('recupera el primer material tomado como encabezado', () => {
+    // El detector marca la fila 0 como encabezado porque "Óxido de cobalto"
+    // clasifica como material. En realidad es el primer material.
+    const rows = [
+      ['Óxido de cobalto', '3'],
+      ['Carbonato de bario', '20'],
+    ];
+    const columns: TableColumn[] = [materialCol(0, 'additional')];
+    const glaze = buildGlazeFromRecipeSheet(rows, 0, columns, 'Alternativo España');
+
+    expect(glaze?.name).toBe('Alternativo España');
+    const items = [...(glaze?.recipe?.base || []), ...(glaze?.recipe?.additional || [])];
+    expect(items).toEqual([
+      { material: 'Óxido de cobalto', amount: 0 },
+      { material: 'Carbonato de bario', amount: 0 },
+    ]);
+  });
+
+  it('rescata materiales cuando la columna reconocida está vacía', () => {
+    // La columna que se reconoció como material no contiene nada: los datos
+    // están en otra columna y solo se recuperan por posición.
+    const rows = [
+      ['Material', ''],
+      ['Caolín', ''],
+      ['Sílice', '100'],
+    ];
+    const columns: TableColumn[] = [materialCol(1)];
+    const glaze = buildGlazeFromRecipeSheet(rows, 0, columns, 'Alternativo España');
+
+    const items = [...(glaze?.recipe?.base || []), ...(glaze?.recipe?.additional || [])];
+    expect(items).toEqual([
+      { material: 'Caolín', amount: 0 },
+      { material: 'Sílice', amount: 100 },
+    ]);
+  });
+
+  it('no duplica la fila de encabezado si era un encabezado de verdad', () => {
+    const rows = [
+      ['Material', 'Cantidad (g)'],
+      ['Caolín', '200'],
+    ];
+    const columns: TableColumn[] = [materialCol(0), amountCol(1)];
+    const glaze = buildGlazeFromRecipeSheet(rows, 0, columns, 'Dorado');
+
+    expect(glaze?.recipe?.base).toEqual([{ material: 'Caolín', amount: 200 }]);
+  });
+
+  it('mantiene el total cuando solo hay aditivos', () => {
+    const rows = [
+      ['Material', 'Cantidad (g)'],
+      ['Óxido de hierro', '8'],
+    ];
+    const columns: TableColumn[] = [materialCol(0, 'additional'), amountCol(1, 'additional')];
+    const glaze = buildGlazeFromRecipeSheet(rows, 0, columns, 'Alternativo España');
+
+    expect(glaze?.recipe?.additional).toEqual([{ material: 'Óxido de hierro', amount: 8 }]);
+    expect(glaze?.recipe?.totalBase).toBe(0);
   });
 });

@@ -26,6 +26,79 @@ export interface TableColumn {
 /** Fila que parece un total o un subtotal, no un material. */
 const isTotalRow = (label: string) => /^(total|subtotal|suma|resumen)\b/i.test(label.trim());
 
+/**
+ * Palabras que sí son encabezado. La comparación es exacta y normalizada: sirve
+ * para distinguir "Material" de un material llamado "Óxido de cobalto", que
+ * contiene "oxido" pero no es un encabezado.
+ */
+const HEADER_CELL_WORDS = new Set([
+  'material', 'materiales', 'materia', 'materia prima', 'materia primas', 'materias',
+  'prima', 'primas', 'cruda', 'blanca', 'ingrediente', 'componente',
+  'cantidad', 'cant', 'porcentaje', 'peso', 'pesos', 'gramos', 'gr', 'g',
+  'aditivo', 'aditivo(s)', 'adicional', 'oxido', 'oxidos', 'colorante', 'pigmento', 'tinte',
+  'total', 'total base', 'suma', 'subtotal', 'resumen', 'base', 'receta',
+  'codigo', 'nombre', 'nombre del esmalte', 'ficha', 'notas', 'observaciones',
+  'color', 'acabado', 'textura', 'uso', 'temperatura', 'cono', 'atmosfera', 'url',
+]);
+
+const normalizeCell = (value: unknown): string =>
+  String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .split(' ')
+    .filter(token => token.length > 0)
+    .join(' ')
+    .trim();
+
+/** ¿La celda es un encabezado y no un valor? */
+export const isHeaderCell = (value: unknown): boolean => {
+  const text = String(value ?? '').trim();
+  if (!text) return true;
+  // Todas las palabras deben ser de encabezado. "cantidad g" es un
+  // encabezado; "oxido de cobalto" no, porque "de" y "cobalto" no lo son.
+  const tokens = normalizeCell(text).split(' ').filter(Boolean);
+  if (tokens.length === 0) return true;
+  return tokens.every(token => HEADER_CELL_WORDS.has(token));
+};
+
+/** ¿El valor es un número, no el nombre de un material? */
+const isNumericCell = (value: unknown): boolean => {
+  if (typeof value === 'number') return Number.isFinite(value);
+  const text = String(value ?? '').trim();
+  if (!text) return false;
+  return /^-?\d+(?:[.,]\d+)?\s*(?:%|[a-zA-Z]{0,3})?$/.test(text) && /\d/.test(text);
+};
+
+/**
+ * Rescate para hojas sin encabezados claros: toma el primer texto no vacío de
+ * la fila como material y el primer número como cantidad, sin depender de qué
+ * columna se reconoció como encabezado.
+ */
+export const extractPositionalItems = (row: unknown[]): RecipeItem[] => {
+  let material = '';
+  let amount = 0;
+  let foundAmount = false;
+
+  for (const cell of row || []) {
+    const text = String(cell ?? '').trim();
+    if (!text) continue;
+
+    if (!foundAmount && isNumericCell(cell)) {
+      amount = parseExcelAmount(cell);
+      foundAmount = true;
+      continue;
+    }
+    if (!material && !isHeaderCell(cell)) {
+      material = text;
+    }
+  }
+
+  if (!material) return [];
+  return [{ material, amount }];
+};
+
 export const parseExcelAmount = (value: unknown): number => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (value === null || value === undefined) return 0;
@@ -91,6 +164,9 @@ export const extractRecipeItems = (
     .forEach(col => {
       const raw = String(row[col.index] ?? '').trim();
       if (!raw) return;
+      // Un número suelto en la columna de material es una cantidad mal
+      // colocada, no el nombre de un material.
+      if (isNumericCell(raw)) return;
 
       if (raw.includes('|') || raw.includes('\n') || /[,;]\s*\d/.test(raw)) {
         const items = parsePackedMaterias(raw);
@@ -148,7 +224,20 @@ export const buildGlazeFromRecipeSheet = (
   const base: RecipeItem[] = [];
   const additional: RecipeItem[] = [];
 
-  for (let r = headerIndex + 1; r < rowsData.length; r += 1) {
+  // Si la fila que se tomó como encabezado contiene un material real y no la
+  // palabra "Material", era el primer material de la receta y se estaba
+  // perdiendo. Estas hojas a menudo llegan sin fila de encabezado.
+  const headerRow = rowsData[headerIndex] || [];
+  const headerIsData = columns
+    .filter(c => c.kind === 'material' || c.kind === 'packed')
+    .some(c => {
+      const text = String(headerRow[c.index] ?? '').trim();
+      return text !== '' && !isTotalRow(text) && !isHeaderCell(text);
+    });
+
+  const firstRow = headerIsData ? headerIndex : headerIndex + 1;
+
+  for (let r = firstRow; r < rowsData.length; r += 1) {
     const row = rowsData[r] || [];
     const hasContent = row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '');
     if (!hasContent) continue;
@@ -160,7 +249,15 @@ export const buildGlazeFromRecipeSheet = (
       .filter(Boolean);
     if (materialCells.length > 0 && materialCells.every(isTotalRow)) continue;
 
-    const { base: rowBase, additional: rowAdditional } = extractRecipeItems(row, columns);
+    let { base: rowBase, additional: rowAdditional } = extractRecipeItems(row, columns);
+
+    // Si las columnas reconocidas no aportan nada, se rescata la fila por
+    // posición: los datos pueden estar en columnas que no se reconocieron.
+    if (rowBase.length === 0 && rowAdditional.length === 0) {
+      const rescued = extractPositionalItems(row);
+      if (rescued.length > 0) rowBase = rescued;
+    }
+
     rowBase.forEach(item => {
       if (item.material.trim() && !isTotalRow(item.material)) base.push(item);
     });
