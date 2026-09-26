@@ -628,6 +628,13 @@ export default function App() {
           </AnimatePresence>
         </div>
       </main>
+
+      {/* Identificador de build. Si un arreglo parece no tener efecto, este
+          código dice si el navegador tiene la versión desplegada o una copia
+          cacheada anterior. */}
+      <div className="pointer-events-none fixed bottom-1 right-2 z-20 select-none font-mono text-[10px] text-[#B4B4B0]">
+        v{__BUILD_SHA__}
+      </div>
     </div>
   );
 }
