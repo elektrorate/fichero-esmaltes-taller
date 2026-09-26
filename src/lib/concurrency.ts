@@ -4,6 +4,8 @@
 // El objetivo: que dos personas que tienen la misma ficha abierta no pierdan
 // trabajo la una de la otra en silencio.
 
+import type { Glaze } from '../types';
+
 /**
  * Serializa un valor de forma estable (claves ordenadas) para poder comparar
  * el estado que el usuario tiene en pantalla con el que hay en el servidor.
@@ -66,6 +68,33 @@ export const CONCURRENCY_IGNORED_FIELDS = [
   'authorName',
   'inventoryLevel',
 ];
+
+/**
+ * Prepara una ficha para comparar el contenido y las copias.
+ *
+ * Las copias se guardan en el documento bajo la clave `__copies`, así que se
+ * reconstruyen aquí para que una diferencia en ellas se detecte como un
+ * conflicto y no pase desapercibida. El `copyId` se normaliza por posición
+ * porque cada copia reescrita recibe un id nuevo y comparar el id daría falso
+ * positivo en cuanto una copia se vuelve a guardar.
+ *
+ * Importante: recibe la ficha TAL COMO SE CARGÓ, nunca con las copias que se
+ * van a escribir. Sustituir las copias de la línea base por las nuevas hace
+ * que toda edición de una copia parezca un conflicto, porque la diferencia
+ * comparada es precisamente el cambio que el usuario está haciendo.
+ */
+export function buildComparableGlaze(glaze: Partial<Glaze>): Record<string, unknown> {
+  const { copies, updatedAt: _updated, createdAt: _created, ...content } = glaze as Glaze & {
+    updatedAt?: unknown;
+    createdAt?: unknown;
+  };
+  void _updated;
+  void _created;
+  return {
+    ...content,
+    __copies: (copies || []).map((copy, index) => ({ ...copy, copyId: `idx-${index}` })),
+  };
+}
 
 /**
  * Devuelve los campos en los que la versión local y la del servidor difieren.

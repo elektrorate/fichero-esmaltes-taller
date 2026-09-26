@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { findConflictingFields, stableStringify } from './concurrency';
+import { findConflictingFields, buildComparableGlaze, stableStringify } from './concurrency';
+import type { Glaze } from '../types';
 
 /** Timestamp de Firestore simulado: dos instancias del mismo instante. */
 const timestamp = (millis: number) => ({
@@ -202,5 +203,98 @@ describe('findConflictingFields con copias', () => {
       ],
     };
     expect(findConflictingFields(base, remote)).toEqual(['__copies']);
+  });
+});
+
+/**
+ * El bug que motivó este bloque: `saveCopies` comparaba la línea base con las
+ * copias que iba a escribir, de modo que editar una copia siempre generaba
+ * conflicto. Estos tests fijan que la comparación es entre la línea base tal
+ * como se cargó y el servidor, nunca contra lo que el usuario está guardando.
+ */
+describe('buildComparableGlaze al guardar copias', () => {
+  const copia = (patch: Record<string, unknown> = {}) =>
+    ({
+      copyId: 'idx-0',
+      status: 'draft',
+      notes: 'original',
+      ...patch,
+    }) as unknown as Glaze['copies'][number];
+
+  it('no da conflicto al editar una copia si el servidor no ha cambiado', () => {
+    // Es el caso normal: edito la copia 1 y guardo. El servidor sigue igual.
+    const baseline = { name: 'Celadón', copies: [copia()] };
+    const remote = { name: 'Celadón', copies: [copia()] };
+
+    const conflicts = findConflictingFields(
+      buildComparableGlaze(baseline),
+      buildComparableGlaze(remote),
+    );
+    expect(conflicts).toEqual([]);
+  });
+
+  it('documenta el fallo: inyectar las copias nuevas en la línea base confunde', () => {
+    // Esta es la forma que tenía `saveCopies` y que bloqueaba todos los
+    // guardados de copia. Se conserva como prueba de por qué la comparación
+    // no puede usar lo que el usuario está guardando.
+    const baseline = { name: 'Celadón', copies: [copia()] };
+    const remote = { name: 'Celadón', copies: [copia()] };
+    const nuevas = [copia({ notes: 'mi cambio' })];
+
+    const conCambios = findConflictingFields(
+      buildComparableGlaze({ ...baseline, copies: nuevas }),
+      buildComparableGlaze(remote),
+    );
+    expect(conCambios).toEqual(['__copies']);
+  });
+
+  it('sigue detectando el cambio de otra persona en una copia', () => {
+    const baseline = { name: 'Celadón', copies: [copia()] };
+    const remote = { name: 'Celadón', copies: [copia({ status: 'validated' })] };
+
+    const conflicts = findConflictingFields(
+      buildComparableGlaze(baseline),
+      buildComparableGlaze(remote),
+    );
+    expect(conflicts).toEqual(['__copies']);
+  });
+
+  it('detecta que otra persona añadió una copia', () => {
+    const baseline = { name: 'Celadón', copies: [copia()] };
+    const remote = { name: 'Celadón', copies: [copia(), copia({ copyId: 'idx-1' })] };
+
+    const conflicts = findConflictingFields(
+      buildComparableGlaze(baseline),
+      buildComparableGlaze(remote),
+    );
+    expect(conflicts).toEqual(['__copies']);
+  });
+
+  it('ignora el copyId regenerado al reordenar la posición', () => {
+    const baseline = { copies: [copia({ copyId: 'viejo-a' })] };
+    const remote = { copies: [copia({ copyId: 'nuevo-b' })] };
+
+    expect(findConflictingFields(
+      buildComparableGlaze(baseline),
+      buildComparableGlaze(remote),
+    )).toEqual([]);
+  });
+
+  it('no ve conflicto si la ficha no tiene copias', () => {
+    expect(findConflictingFields(
+      buildComparableGlaze({ name: 'X' }),
+      buildComparableGlaze({ name: 'X' }),
+    )).toEqual([]);
+  });
+
+  it('sigue detectando un cambio en el contenido junto a las copias', () => {
+    const baseline = { name: 'Celadón', color: 'Verde', copies: [copia()] };
+    const remote = { name: 'Celadón', color: 'Azul', copies: [copia()] };
+
+    const conflicts = findConflictingFields(
+      buildComparableGlaze(baseline),
+      buildComparableGlaze(remote),
+    );
+    expect(conflicts).toEqual(['color']);
   });
 });

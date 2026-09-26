@@ -32,7 +32,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db, getGlazeStorage } from './firebase';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { findConflictingFields } from './concurrency';
+import { findConflictingFields, buildComparableGlaze } from './concurrency';
 import type { Comment, Glaze, GlazeStatus } from '../types';
 
 export const GLAZES_COLLECTION = 'glazes';
@@ -337,19 +337,13 @@ export const glazeRepo = {
       }
       const remote = { id: snapshot.id, ...snapshot.data() } as Glaze;
       if (!force) {
-        // Las copias se comparan bajo una clave que no está en la lista de
-        // ignorados. Además se normaliza el `copyId` por posición: cada copia
-        // reescrita recibe un id nuevo, y comparar el id daría falso positivo
-        // en cuanto una copia se vuelve a guardar.
-        const stamp = (list: Glaze['copies']) => (list || []).map((copy, index) => ({ ...copy, copyId: `idx-${index}` }));
-        const contentOf = (glaze: Partial<Glaze>) => {
-          const { copies: _dropped, updatedAt: _updated, createdAt: _created, ...content } = glaze as Glaze & { updatedAt?: unknown; createdAt?: unknown };
-          void _dropped; void _updated; void _created;
-          return { ...content, __copies: stamp(glaze.copies) };
-        };
+        // La comparación usa la línea base tal como se cargó. Sustituir aquí
+        // las copias por las que se van a escribir convertía toda edición de
+        // una copia en conflicto, porque la única diferencia comparada era
+        // justo el cambio que el usuario estaba haciendo.
         const conflicts = findConflictingFields(
-          contentOf({ ...baseline, copies }),
-          contentOf(remote),
+          buildComparableGlaze(baseline as Partial<Glaze>),
+          buildComparableGlaze(remote),
         );
         if (conflicts.length > 0) {
           throw new GlazeConflictError(conflicts, remote.updatedAt, path);
