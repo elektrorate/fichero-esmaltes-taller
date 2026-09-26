@@ -27,6 +27,48 @@ import {
 // comprimido antes de escribir en lugar de fallar al guardar.
 const MAX_IMAGE_BYTES = 900 * 1024;
 
+// Tope real de Firestore para un documento. Las fotos incrustadas consumen
+// este presupuesto junto con el resto de campos, así que conviene avisar
+// antes de alcanzarlo en lugar de dejar que falle el guardado.
+const FIRESTORE_DOC_LIMIT_BYTES = 1024 * 1024;
+
+/** Tamaño aproximado en bytes de una imagen incrustada como data-URL. */
+const dataUrlBytes = (value: string): number => {
+  const comma = value.indexOf(',');
+  if (comma < 0) return 0;
+  return Math.floor((value.length - comma - 1) * 0.75);
+};
+
+/**
+ * Resumen de lo que ocupan las fotos dentro de la ficha. Devuelve null si no
+ * hay ninguna, y un texto de aviso cuando se acerca al límite del documento.
+ */
+const describeEmbeddedPhotos = (
+  mainImage: string,
+  gallery: string[] | undefined,
+): { text: string; warning: boolean } | null => {
+  const values = [mainImage, ...(gallery || [])].filter((value): value is string => !!value);
+  const embedded = values.filter(value => value.startsWith('data:'));
+  if (embedded.length === 0) return null;
+
+  const bytes = embedded.reduce((sum, value) => sum + dataUrlBytes(value), 0);
+  const kb = Math.round(bytes / 1024);
+  const limitKb = Math.round(FIRESTORE_DOC_LIMIT_BYTES / 1024);
+  const photos = `${embedded.length} foto${embedded.length === 1 ? '' : 's'}`;
+
+  if (bytes >= FIRESTORE_DOC_LIMIT_BYTES * 0.8) {
+    return {
+      text: `Las fotos van dentro de la ficha y ya ocupan ${kb} KB de ${limitKb} KB. Si el guardado falla, quita alguna foto.`,
+      warning: true,
+    };
+  }
+
+  return {
+    text: `Las ${photos} van dentro de la ficha: ${kb} KB de ${limitKb} KB disponibles.`,
+    warning: false,
+  };
+};
+
 interface GlazeFormProps {
   glazeId: string | null;
   initialCopyIndex?: number | null;
@@ -1427,10 +1469,10 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       blob,
       `glazes/${effectiveId ?? 'new'}/${crypto.randomUUID()}.jpg`,
     );
+    // El proyecto no tiene Storage aprovisionado, así que la imagen se
+    // incrusta en la ficha. El estado de la subida ya lo refleja el resumen de
+    // espacio de `describeEmbeddedPhotos`, sin avisar de un fallo inexistente.
     const value = uploaded ?? compressed;
-    if (!uploaded) {
-      setImageMessage('Imagen guardada dentro de la ficha (Storage no disponible). No añadas muchas fotos o el guardado fallará.');
-    }
 
     setFormData(prev => {
       if (targetIdx === undefined) {
@@ -2452,6 +2494,15 @@ Subir Excel (URLs o tablas)
             <div className="flex items-center justify-between">
               <h4 className="text-[13px] font-bold uppercase tracking-widest text-[#8a168a]">Galería de Fotos ({formData.gallery?.length || 0})</h4>
             </div>
+            {(() => {
+              const summary = describeEmbeddedPhotos(formData.mainImage, formData.gallery);
+              if (!summary) return null;
+              return (
+                <p className={`text-[11px] font-medium ${summary.warning ? 'text-amber-600' : 'text-[#636E72]'}`}>
+                  {summary.text}
+                </p>
+              );
+            })()}
             <div className="grid grid-cols-2 gap-3">
               {(formData.gallery || []).map((img, idx) => (
                 <div key={idx} className="relative rounded-2xl border border-[#E4E4E2] bg-[#F7F7F5] overflow-hidden flex flex-col">
