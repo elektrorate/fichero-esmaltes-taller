@@ -52,6 +52,54 @@ describe('stableStringify', () => {
   });
 });
 
+/**
+ * El id identifica el documento, no es contenido. La línea base del formulario
+ * y la versión que lee el servidor tienen que compararse aunque una lo
+ * incluya y la otra no. Este bloque existió para evitar un falso positivo que
+ * bloqueaba el guardado de todas las fichas: la línea base venía de
+ * `glazeRepo.get` sin `id` y el servidor de `getWithCopies` con `id`.
+ */
+describe('identidad del documento', () => {
+  it('no ve conflicto si solo cambia la presencia del id', () => {
+    const sinId = { name: 'Celadón', color: 'Verde' };
+    const conId = { id: 'abc123', name: 'Celadón', color: 'Verde' };
+    expect(findConflictingFields(sinId, conId)).toEqual([]);
+    expect(findConflictingFields(conId, sinId)).toEqual([]);
+  });
+
+  it('no ve conflicto si el id es el mismo', () => {
+    const conId = { id: 'abc123', name: 'Celadón' };
+    expect(findConflictingFields(conId, { ...conId })).toEqual([]);
+  });
+
+  it('sigue detectando un conflicto real aunque el id coincida', () => {
+    const mine = { id: 'abc123', name: 'Celadón' };
+    const remote = { id: 'abc123', name: 'Celadón de Rye' };
+    expect(findConflictingFields(mine, remote)).toEqual(['name']);
+  });
+});
+
+/**
+ * Al crear una ficha el formulario no tiene línea base y la deja vacía. Sin
+ * este caso, guardar una ficha nueva comparaba `{}` contra el documento recién
+ * creado y daba por cambiados todos los campos.
+ */
+describe('ficha nueva sin línea base', () => {
+  it('no ve conflicto si no hay línea base', () => {
+    expect(findConflictingFields({}, { name: 'Celadón', color: 'Verde' })).toEqual([]);
+  });
+
+  it('no ve conflicto si la línea base llega como null o undefined', () => {
+    const remote = { name: 'Celadón' };
+    expect(findConflictingFields(null, remote)).toEqual([]);
+    expect(findConflictingFields(undefined, remote)).toEqual([]);
+  });
+
+  it('sigue detectando conflictos cuando la línea base sí tiene contenido', () => {
+    expect(findConflictingFields({ name: 'A' }, { name: 'B' })).toEqual(['name']);
+  });
+});
+
 describe('findConflictingFields', () => {
   it('no detecta conflicto si la versión local y la del servidor coinciden', () => {
     expect(findConflictingFields(BASE, { ...BASE })).toEqual([]);

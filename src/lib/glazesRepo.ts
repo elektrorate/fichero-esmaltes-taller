@@ -196,7 +196,11 @@ export const glazeRepo = {
   get(id: string): Promise<Glaze | null> {
     return run(`${GLAZES_COLLECTION}/${id}`, async () => {
       const snapshot = await getDoc(doc(db, GLAZES_COLLECTION, id));
-      return snapshot.exists() ? (snapshot.data() as Glaze) : null;
+      // El id se antepone para que la forma sea la misma que devuelven
+      // `getWithCopies` y `subscribeGlaze`. Si esta lectura lo omitiese, la
+      // línea base que carga el formulario y la versión del servidor que
+      // compara `saveContent` no coincidirían en la misma estructura.
+      return snapshot.exists() ? ({ id: snapshot.id, ...snapshot.data() } as Glaze) : null;
     });
   },
 

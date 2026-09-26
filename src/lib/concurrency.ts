@@ -51,8 +51,14 @@ export function stableStringify(value: unknown): string {
  *  - `inventoryLevel`: lo edita el panel de inventario. `saveContent` lo
  *    excluye de la escritura, así que no puede pisarse y no debe generar un
  *    aviso que bloquearía el guardado de la ficha sin motivo.
+ *
+ * `id` se ignora por un motivo distinto: identifica el documento, no es
+ * contenido. La línea base se carga con `glazeRepo.get` y el servidor con
+ * `getWithCopies`, y si uno lo incluye y el otro no, comparar el id produce
+ * un conflicto en todas las fichas sin que exista ninguno real.
  */
 export const CONCURRENCY_IGNORED_FIELDS = [
+  'id',
   'copies',
   'createdAt',
   'updatedAt',
@@ -69,6 +75,10 @@ export function findConflictingFields(mine: unknown, remote: unknown): string[] 
   if (!remote || typeof remote !== 'object') return [];
   const mineRecord = (mine && typeof mine === 'object' ? mine : {}) as Record<string, unknown>;
   const remoteRecord = remote as Record<string, unknown>;
+  // Sin línea base no hay contra qué comparar. El formulario la deja vacía al
+  // crear una ficha, y comparar `{}` contra un documento recién creado daría
+  // todos los campos por cambiados.
+  if (Object.keys(mineRecord).length === 0) return [];
   const keys = new Set([...Object.keys(mineRecord), ...Object.keys(remoteRecord)]);
   const conflicts: string[] = [];
   for (const key of keys) {
