@@ -13,6 +13,14 @@ import ConflictModal from './ConflictModal';
 import DataNoticeBanner, { type DataNotice } from './DataNoticeBanner';
 import { buildRecalculatedRecipe, RecalcResult } from '../lib/recalcEngine';
 import { extractRecipeFromImage, extractionToRecipe } from '../lib/recipeExtractor';
+import {
+  buildGlazeFromRecipeSheet,
+  extractRecipeItems as extractRecipeItemsShared,
+  hasMaterialColumn,
+  hasNameColumn,
+  parseExcelAmount,
+  type TableColumn,
+} from '../lib/excelRecipes';
 
 // Firestore rechaza un documento de más de 1 MiB. La foto principal y las
 // copias de galería comparten ese presupuesto, así que se valida el blob
@@ -232,12 +240,6 @@ const BASE_MATERIAL_WORDS = ['materia prima', 'materia', 'material', 'ingredient
 const ADDITIONAL_MATERIAL_WORDS = ['aditivo', 'adicional', 'oxido', 'colorante', 'pigmento', 'tinte'];
 const AMOUNT_WORDS = ['cantidad', 'cant', 'porcentaje', 'peso', 'gramos', 'gr'];
 
-interface TableColumn {
-  index: number;
-  kind: 'text' | 'material' | 'amount' | 'packed';
-  sub: string;
-  num?: number;
-}
 
 const classifyExcelHeader = (raw: unknown): TableColumn | null => {
   const rawText = String(raw ?? '').trim();
@@ -285,58 +287,11 @@ const classifyExcelHeader = (raw: unknown): TableColumn | null => {
   return null;
 };
 
-const parseExcelAmount = (value: unknown): number => {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  if (value === null || value === undefined) return 0;
-  let text = String(value).trim();
-  if (!text) return 0;
-
-  if (text.includes(',') && text.includes('.')) {
-    text = text.replace(/\./g, '').replace(',', '.');
-  } else if (text.includes(',')) {
-    text = text.replace(',', '.');
-  }
-
-  const match = text.match(/-?\d+(?:\.\d+)?/);
-  return match ? (parseFloat(match[0]) || 0) : 0;
-};
-
 const splitListValue = (value: string) =>
   value
     .split(/[,;|/]+/)
     .map(item => item.trim())
     .filter(Boolean);
-
-const parsePackedMaterias = (text: string): RecipeItem[] => {
-  const items: RecipeItem[] = [];
-  text.split(/\s*\|\s*|\n/).forEach(part => {
-    const clean = part.trim().replace(/:$/, '');
-    if (!clean) return;
-
-    if (clean.includes(',')) {
-      const lastComma = clean.lastIndexOf(',');
-      const rightPart = clean.slice(lastComma + 1).trim().replace(/(?:g|gr|grm|kg)\.?\s*$/i, '');
-      if (/^(?:-?\d+(?:[.,]\d+)?)$/.test(rightPart)) {
-        const material = clean.slice(0, lastComma).trim();
-        if (material) {
-          items.push({ material, amount: parseExcelAmount(rightPart) });
-          return;
-        }
-      }
-    }
-
-    const match = clean.match(/^(.*?)\s*[:=]?\s*(-?\d+(?:[.,]\d+)?)\s*(?:g|gr|grm|kg|gr\.|g\.)\s*$/)
-      || clean.match(/^(.*?)\s*[:=]?\s*(-?\d+(?:[.,]\d+)?)\s*%?\s*$/);
-    if (match && match[1].trim()) {
-      items.push({ material: match[1].trim().replace(/,$/, ''), amount: parseExcelAmount(match[2]) });
-    } else if (match) {
-      items.push({ material: clean, amount: parseExcelAmount(match[2]) });
-    } else {
-      items.push({ material: clean, amount: 0 });
-    }
-  });
-  return items;
-};
 
 const mapTableValue = (field: string, raw: unknown): string => {
   const value = String(raw ?? '').trim();
@@ -437,43 +392,7 @@ const buildGlazeFromTableRow = (row: unknown[], columns: TableColumn[], sheetNam
   if (!name) return null;
   if (/^(total|subtotal|suma|resumen)\b/i.test(name.trim())) return null;
 
-  let base: RecipeItem[] = [];
-  let additional: RecipeItem[] = [];
-  const usedAmountIndexes = new Set<number>();
-
-  columns
-    .filter(c => c.kind === 'material')
-    .forEach(col => {
-      const raw = String(row[col.index] ?? '').trim();
-      if (!raw) return;
-
-      if (raw.includes('|') || raw.includes('\n') || /[,;]\s*\d/.test(raw)) {
-        const items = parsePackedMaterias(raw);
-        items.forEach(item => {
-          if (col.sub === 'base') base.push(item);
-          else additional.push(item);
-        });
-        return;
-      }
-
-      const amountCol = columns.find(c => c.kind === 'amount' && c.num === col.num && c.sub === col.sub && !usedAmountIndexes.has(c.index))
-        || columns.find(c => c.kind === 'amount' && c.num === col.num && !usedAmountIndexes.has(c.index));
-      if (amountCol) usedAmountIndexes.add(amountCol.index);
-      const amount = amountCol ? parseExcelAmount(row[amountCol.index]) : 0;
-      const item: RecipeItem = { material: raw, amount };
-      if (col.sub === 'base') base.push(item);
-      else additional.push(item);
-    });
-
-  columns
-    .filter(c => c.kind === 'packed')
-    .forEach(col => {
-      const rawText = String(row[col.index] ?? '').trim();
-      if (!rawText) return;
-      const items = parsePackedMaterias(rawText);
-      if (col.sub === 'base') base = base.concat(items);
-      else additional = additional.concat(items);
-    });
+  const { base, additional } = extractRecipeItemsShared(row, columns);
 
   const totalCol = columns.find(c => c.kind === 'text' && c.sub === 'total');
   const totalBase = totalCol
@@ -557,6 +476,25 @@ const parseWorkbookTables = (workbook: XLSX.WorkBook): { rows: Array<{ sheet: st
     const recognizedHeaders = columns
       .map(col => String(rowsData[headerIndex][col.index] ?? '').trim())
       .filter(Boolean);
+
+    // Hoja sin columna de nombre: es la receta de una sola ficha, no un
+    // catálogo. Cada fila es un material, así que se importa una ficha llamada
+    // como la hoja en lugar de una ficha por fila (que saldrían sin nombre).
+    if (!hasNameColumn(columns) && hasMaterialColumn(columns)) {
+      const recipeGlaze = buildGlazeFromRecipeSheet(rowsData, headerIndex, columns, sheetName);
+      if (recipeGlaze) {
+        const materialCount = (recipeGlaze.recipe?.base?.length || 0) + (recipeGlaze.recipe?.additional?.length || 0);
+        rows.push({ sheet: sheetName, glaze: recipeGlaze });
+        diagnostics.push(
+          `Hoja '${sheetName}': sin columna de nombre, se importa como la ficha '${sheetName}' con ${materialCount} materiales.`,
+        );
+      } else {
+        diagnostics.push(
+          `Hoja '${sheetName}': no tiene columna de nombre ni materiales con cantidad, no se pudo importar.`,
+        );
+      }
+      return;
+    }
 
     let rowCount = 0;
     for (let r = headerIndex + 1; r < rowsData.length; r += 1) {
@@ -1240,7 +1178,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
       const total = urls.length + tables.length;
       if (total === 0) {
         setBulkImportMessage('');
-        setSourceError(`No leí fichas de ese archivo. ${diagnostics.join(' ')} Revisa que tenga URLs de Glazy o una tabla con columnas como Nombre, Código, Materia 1 / Cantidad 1.`);
+        setSourceError(`No leí fichas de ese archivo. ${diagnostics.join(' ')} Se aceptan dos formatos: URLs de Glazy, o una tabla con columna Nombre (una ficha por fila, con Materia 1 / Cantidad 1). Si tu hoja solo tiene Material y Cantidad, cada hoja se importa como una ficha con el nombre de la hoja.`);
         return;
       }
 
