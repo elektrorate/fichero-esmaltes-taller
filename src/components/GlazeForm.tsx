@@ -1159,6 +1159,41 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     return Array.from(urls);
   };
 
+  /**
+   * Vuelca una ficha importada en el formulario sin guardarla.
+   *
+   * Se descartan los campos que pertenecen al documento y no a la ficha nueva
+   * (id, código, autor, fechas), y las observaciones se añaden a las que ya
+   * hubiera en lugar de sustituirlas, para no perder lo que estuviera escrito.
+   */
+  const applyImportedGlazeToForm = (imported: Partial<Glaze>) => {
+    const {
+      id: _id,
+      code: _code,
+      status: _status,
+      copies: _copies,
+      authorId: _authorId,
+      authorName: _authorName,
+      createdAt: _createdAt,
+      updatedAt: _updatedAt,
+      observations: importedObservations,
+      ...fields
+    } = imported as Record<string, unknown> & { observations?: string };
+
+    void _id; void _code; void _status; void _copies;
+    void _authorId; void _authorName; void _createdAt; void _updatedAt;
+
+    setFormData(prev => ({
+      ...prev,
+      ...fields,
+      observations: [prev.observations, importedObservations].filter(Boolean).join('\n'),
+    } as Glaze));
+
+    // La ficha sigue sin guardar a propósito: la carga no decide el guardado.
+    setActiveCopyIndex(-1);
+    setDirty(true);
+  };
+
   const handleBulkSourceImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -1191,6 +1226,10 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         setBulkImportMessage(`Importando ${progress} de ${total}...`);
       };
 
+      // Primero se resuelven todas las fichas del archivo, sin escribir nada.
+      // Solo se decide después si caben en la ficha abierta o hay que crearlas.
+      const resolved: Array<{ label: string; glaze: Partial<Glaze> }> = [];
+
       for (const url of urls) {
         await advance();
         try {
@@ -1200,13 +1239,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
           } catch {
             importedRecipe = await fetchGlazyRecipeFromPublicData(url);
           }
-
-          const importedGlaze = buildGlazeFromImportedRecipe(importedRecipe, url);
-          const code = await glazeRepo.nextAvailableCode(importedGlaze.code || `GLAZY-${importedRecipe.id}`);
-
-          await glazeRepo.create({ ...importedGlaze, code, status: 'draft' });
-
-          created += 1;
+          resolved.push({ label: url, glaze: buildGlazeFromImportedRecipe(importedRecipe, url) });
         } catch {
           failed.push(url);
         }
@@ -1214,15 +1247,56 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
 
       for (const { sheet, glaze: rowGlaze } of tables) {
         await advance();
+        resolved.push({ label: rowGlaze.name || `fila de ${sheet}`, glaze: rowGlaze });
+      }
+
+      if (resolved.length === 0) {
+        setBulkImportMessage('');
+        setDataNotice(null);
+        setSourceError(`No leí fichas de ese archivo. ${diagnostics.join(' ')} Se aceptan dos formatos: URLs de Glazy, o una tabla con columna Nombre (una ficha por fila, con Materia 1 / Cantidad 1). Si tu hoja solo tiene Material y Cantidad, cada hoja se importa como una ficha con el nombre de la hoja.`);
+        return;
+      }
+
+      // Una sola ficha se carga en el formulario y NO se guarda. Es una
+      // carga, no un guardado: el usuario revisa y decide con el botón
+      // Guardar. Antes se creaba un borrador en el repositorio sin pedirlo.
+      if (resolved.length === 1 && failed.length === 0) {
+        // Si ya hay una ficha guardada y cambios sin guardar, cargar el
+        // archivo encima los tiraría. Se pregunta antes de seguir.
+        if (effectiveId && dirty) {
+          const ok = window.confirm(
+            'Esta ficha ya está guardada y tiene cambios sin guardar.\n\n' +
+            'Si continúo, el contenido del archivo sustituye lo que has escrito. ' +
+            'Si cancelas, no se carga nada.\n\n¿Continúo?',
+          );
+          if (!ok) {
+            setBulkImportMessage('');
+            setDataNotice(null);
+            return;
+          }
+        }
+
+        applyImportedGlazeToForm(resolved[0].glaze);
+        setBulkImportMessage('');
+        setSourceError('');
+        setDataNotice({
+          tone: 'success',
+          title: 'Datos cargados en la ficha',
+          detail: 'He puesto el contenido del archivo en esta ficha. Revísalo y pulsa Guardar cuando esté listo. No se ha guardado nada todavía.',
+        });
+        return;
+      }
+
+      for (const { label, glaze } of resolved) {
         try {
-          const baseCode = rowGlaze.code || rowGlaze.name || `FICHA-${sheet}`;
+          const baseCode = glaze.code || glaze.name || `FICHA-${label}`;
           const code = await glazeRepo.nextAvailableCode(baseCode);
 
-          await glazeRepo.create({ ...rowGlaze, code, status: 'draft' });
+          await glazeRepo.create({ ...glaze, code, status: 'draft' });
 
           created += 1;
         } catch {
-          failed.push(rowGlaze.name || `fila de ${sheet}`);
+          failed.push(label);
         }
       }
 
@@ -1234,7 +1308,7 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
         title: `Importación terminada: ${created} ${created === 1 ? 'ficha creada' : 'fichas creadas'}`,
         detail: failed.length > 0
           ? `${created} fichas se han guardado como borrador. ${failed.length} no se pudieron importar: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '…' : ''}.`
-          : `Las ${created} fichas se han guardado como borrador y ya están en el repositorio. Esta ficha sigue sin guardar.`,
+          : `El archivo traía ${created} fichas, así que se han creado como borradores en el repositorio. Con una sola ficha la cargo en el formulario sin guardar.`,
       });
     } catch (error) {
       setSourceError(error instanceof Error ? error.message : 'No pude leer ese Excel.');
