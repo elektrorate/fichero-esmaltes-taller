@@ -7,7 +7,7 @@ import { STATUS_LABELS, ATMOSPHERE_OPTIONS } from '../constants';
 import GlazeTechModules from './GlazeTechModules';
 import { motion, AnimatePresence } from 'motion/react';
 import { Save, Plus, Trash2, Info, Image as ImageIcon, AlertCircle, Loader2 as Spinner, Upload, FileInput, Copy, CheckCircle2, RefreshCcw, ChevronDown, FolderOpen } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, parseAmountInput } from '../lib/utils';
 import RecalculoModal from './RecalculoModal';
 import ConflictModal from './ConflictModal';
 import DataNoticeBanner, { type DataNotice } from './DataNoticeBanner';
@@ -31,6 +31,46 @@ const MAX_IMAGE_BYTES = 900 * 1024;
 // este presupuesto junto con el resto de campos, así que conviene avisar
 // antes de alcanzarlo en lugar de dejar que falle el guardado.
 const FIRESTORE_DOC_LIMIT_BYTES = 1024 * 1024;
+
+/**
+ * Campo de cantidad de un material.
+ *
+ * Guarda el texto que se está escribiendo y solo lo convierte a número al
+ * salir del campo. Parsear en cada pulsación impedía escribir decimales: al
+ * teclear "0" el valor era 0, que se pintaba como celda vacía, así que el cero
+ * desaparecía; y al teclear la coma o el punto, un input de número entrega la
+ * cadena vacía y la pulsación se perdía. El resultado era que "0,2" era
+ * imposible de escribir y había que usar las flechitas del spinner.
+ */
+const AmountInput = ({
+  value,
+  onCommit,
+  label,
+}: {
+  value: number;
+  onCommit: (next: number) => void;
+  label: string;
+}) => {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? (value === 0 ? '' : String(value));
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      aria-label={label}
+      value={shown}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft === null) return;
+        onCommit(parseAmountInput(draft));
+        setDraft(null);
+      }}
+      className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white sm:w-24"
+      placeholder="0.0"
+    />
+  );
+};
 
 /** Tamaño aproximado en bytes de una imagen incrustada como data-URL. */
 const dataUrlBytes = (value: string): number => {
@@ -1361,8 +1401,6 @@ export default function GlazeForm({ glazeId, initialCopyIndex = null, onCancel, 
     }
   };
 
-  const getAmountInputValue = (amount: number) => (amount === 0 ? '' : amount);
-
   const handleRecipeExtraction = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -2372,14 +2410,10 @@ Subir Excel (URLs o tablas)
                       placeholder="Materia prima"
                     />
                     <div className="flex items-center gap-3 sm:w-auto">
-                      <input 
-                        type="number"
-                        inputMode="decimal"
-                        step="0.1"
-                        value={getAmountInputValue(item.amount)}
-                        onChange={e => handleRecipeChange('base', idx, 'amount', e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
-                        className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white sm:w-24" 
-                        placeholder="0.0"
+                      <AmountInput
+                        value={item.amount}
+                        label={`Cantidad de ${item.material || 'material'}`}
+                        onCommit={next => handleRecipeChange('base', idx, 'amount', next)}
                       />
                       <button type="button" onClick={() => removeRecipeRow('base', idx)} className="text-[#B2BEC3] hover:text-red-500"><Trash2 size={16} /></button>
                     </div>
@@ -2415,14 +2449,10 @@ Subir Excel (URLs o tablas)
                       placeholder="Materia prima"
                     />
                     <div className="flex items-center gap-3 sm:w-auto">
-                      <input 
-                        type="number"
-                        inputMode="decimal"
-                        step="0.1"
-                        value={getAmountInputValue(item.amount)}
-                        onChange={e => handleRecipeChange('additional', idx, 'amount', e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
-                        className="w-full rounded-xl border border-[#E4E4E2] bg-[#F7F7F5] px-4 py-2.5 text-sm outline-none focus:border-[#2D3436] focus:bg-white sm:w-24" 
-                        placeholder="0.0"
+                      <AmountInput
+                        value={item.amount}
+                        label={`Cantidad de ${item.material || 'extra'}`}
+                        onCommit={next => handleRecipeChange('additional', idx, 'amount', next)}
                       />
                       <button type="button" onClick={() => removeRecipeRow('additional', idx)} className="text-[#B2BEC3] hover:text-red-500"><Trash2 size={16} /></button>
                     </div>
